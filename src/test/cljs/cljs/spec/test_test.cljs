@@ -109,3 +109,16 @@
                      (is (nil? @#'stest/*instrument-enabled*))
                      (fn-2953 "abc"))))
   (is @#'stest/*instrument-enabled*))
+
+(defn fn-2986 [x] true)
+(s/fdef fn-2986 :args (s/cat :x int?) :ret true?)
+
+(deftest test-2986
+  (let [check-res
+        (stest/check `fn-2986 {:clojure.test.check/opts {:num-tests 1}})]
+    (is (seq check-res))
+    (is (every? (fn [res]
+                  (= 1 (-> res
+                           :clojure.test.check/ret
+                           :num-tests)))
+                check-res))))

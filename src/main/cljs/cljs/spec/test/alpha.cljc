@@ -218,11 +218,13 @@ Returns a collection of syms naming the vars unstrumented."
 
 (defn checkable-syms*
   ([]
-    (checkable-syms* nil))
+   (checkable-syms* nil))
   ([opts]
    (reduce into #{}
-     [(filter fn-spec-name? (keys @@#'s/registry-ref))
-      (keys (:spec opts))])))
+           [(filter fn-spec-name?
+                    (keys (deref (deref #?(:clj #'s/registry-ref
+                                           :cljs #'cljs.spec.alpha$macros/registry-ref)))))
+            (keys (:spec opts))])))
 
 (defmacro checkable-syms
   "Given an opts map as per check, returns the set of syms that
