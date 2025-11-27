@@ -4121,11 +4121,11 @@
         (let [sym-meta (meta sym)
               sym-ns (namespace sym)
               sym-name (name sym)
-              cur-ns (str (-> env :ns :name))
               ;; when compiling a macros namespace that requires itself, we need
               ;; to resolve calls to `my-ns.core/foo` to `my-ns.core$macros/foo`
               ;; to avoid undeclared variable warnings - António Monteiro
-              #?@(:cljs [sym (if (and sym-ns
+              #?@(:cljs [cur-ns (str (-> env :ns :name))
+                         sym (if (and sym-ns
                                    (not= sym-ns "cljs.core")
                                    (gstring/endsWith cur-ns "$macros")
                                    (not (gstring/endsWith sym-ns "$macros"))
@@ -4141,7 +4141,7 @@
               {:op    :qualified-method
                :env   env
                :form  sym
-               :class (analyze-symbol env (symbol sym-ns))}
+               :class (analyze-symbol (assoc env :context :expr) (symbol sym-ns))}
               (if (= "new" sym-name)
                 {:kind :new
                  :name (symbol sym-name)}
