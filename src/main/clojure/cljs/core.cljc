@@ -1201,21 +1201,15 @@
 (core/defmacro ^::ana/numeric neg? [x]
   `(< ~x 0))
 
-(core/defmacro ^::ana/numeric unchecked-max
+(core/defmacro ^::ana/numeric max
   ([x] x)
-  ([x y]
-   `(let [x# ~x, y# ~y]
-      (if (> x# y#) x# y#)))
-  ([x y & more]
-   `(max (max ~x ~y) ~@more)))
+  ([x & xs]
+   `(js/Math.max ~x ~@xs)))
 
-(core/defmacro ^::ana/numeric unchecked-min
+(core/defmacro ^::ana/numeric min
   ([x] x)
-  ([x y]
-   `(let [x# ~x, y# ~y]
-      (if (< x# y#) x# y#)))
-  ([x y & more]
-   `(min (min ~x ~y) ~@more)))
+  ([x & xs]
+   `(js/Math.min ~x ~@xs)))
 
 (core/defmacro ^::ana/numeric js-mod [num div]
   (core/list 'js* "(~{} % ~{})" num div))
