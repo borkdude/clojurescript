@@ -890,6 +890,35 @@
              args (map second strs+args)]
     (string-expr (list* 'js* (core/str "(\"\"" strs ")") args))))
 
+(core/defmacro str2
+  [& xs]
+  (core/let [tag (:tag (meta &form))
+             interpolate (core/fn [x]
+                           (core/cond
+                             (typed-expr? &env x '#{clj-nil})
+                             nil
+                             (core/string? x)
+                             ;; avoid backticks, newlines etc to mess with template. Regex could be improved.
+                             (if (re-matches #"[A-Za-z0-9_-]*" x)
+                               [x nil]
+                               ["${~{}}" x])
+                             (compile-time-constant? x)
+                             [x nil]
+                             tag
+                             ["${~{}}" x]
+                             :else
+                             ;; Note: can't assume non-nil despite tag here, so we go through str 1-arity
+                             ["${cljs.core.str.cljs$core$IFn$_invoke$arity$1(~{})}" x]))
+             strs+args (keep interpolate xs)
+             strs (string/join (map first strs+args))
+             args (keep second strs+args)]
+    (string-expr (list* 'js* (core/str (core/when tag "~{}")
+                                       "`"
+                                       strs "`")
+
+                        (core/cond-> args
+                          tag (conj tag))))))
+
 (core/defn- bool-expr [e]
   (vary-meta e assoc :tag 'boolean))
 
