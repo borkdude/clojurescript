@@ -849,29 +849,28 @@
 (core/defn- string-expr [e]
   (vary-meta e assoc :tag 'string))
 
-(core/defmacro str_
-  ([] "")
-  ([x]
-   (if (typed-expr? &env x '#{string})
-     x
-     (string-expr (core/list 'js* "cljs.core.str_(~{})" x))))
-  ([x & ys]
-   (core/let [interpolate (core/fn [x]
-                            (if (typed-expr? &env x '#{string clj-nil})
-                              "~{}"
-                              "cljs.core.str_(~{})"))
-              strs        (core/->> (core/list* x ys)
-                            (map interpolate)
-                            (interpose ",")
-                            (apply core/str))]
-     (string-expr (list* 'js* (core/str "[" strs "].join('')") x ys)))))
-
 (core/defn- compile-time-constant? [x]
   (core/or
    (core/string? x)
    (core/keyword? x)
    (core/boolean? x)
    (core/number? x)))
+
+(core/defmacro str_
+  [& xs]
+  (core/let [interpolate (core/fn [x]
+                           (core/cond
+                             (typed-expr? &env x '#{clj-nil})
+                             nil
+                             (compile-time-constant? x)
+                             ["+~{}" x]
+                             :else
+                             ;; Note: can't assume non-nil despite tag here, so we go through str_ 1-arity
+                             ["+cljs.core.str_(~{})" x]))
+             strs+args (keep interpolate xs)
+             strs (string/join (map first strs+args))
+             args (map second strs+args)]
+    (string-expr (list* 'js* (core/str "(\"\"" strs ")") args))))
 
 ;; TODO: should probably be a compiler pass to avoid the code duplication
 (core/defmacro str

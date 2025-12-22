@@ -3112,7 +3112,9 @@ reduces them without incurring seq initialization"
     ;; works whether x is undefined or null (cljs nil)
     (nil? x) ""
     ;; if we have no more parameters, return
-    (undefined? var-args) (.join #js [x] "")
+    (undefined? var-args) (if (nil? x)
+                            ""
+                            (.toString x))
     ;; var arg case without relying on CLJS fn machinery which creates
     ;; a circularity via IndexedSeq
     :else
