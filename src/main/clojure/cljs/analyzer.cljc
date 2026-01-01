@@ -2325,6 +2325,7 @@ x                          (not (contains? ret :info)))
         type         (::type form-meta)
         proto-impl   (::protocol-impl form-meta)
         proto-inline (::protocol-inline form-meta)
+        async (:async (meta name))
         menv         (-> env
                          (cond->
                            (> (count meths) 1)
@@ -2333,7 +2334,8 @@ x                          (not (contains? ret :info)))
                          ;; only tracking this to keep track of locals we need to capture
                          (dissoc :in-loop)
                          (merge {:protocol-impl proto-impl
-                                 :protocol-inline proto-inline}))
+                                 :protocol-inline proto-inline
+                                 :async async}))
         methods      (map #(disallowing-ns* (analyze-fn-method menv locals % type (nil? name))) meths)
         mfa          (transduce (map :fixed-arity) max 0 methods)
         variadic     (boolean (some :variadic? methods))
@@ -2366,6 +2368,7 @@ x                          (not (contains? ret :info)))
                       :methods methods
                       :variadic? variadic
                       :tag 'function
+                      :async async
                       :inferred-ret-tag inferred-ret-tag
                       :recur-frames *recur-frames*
                       :in-loop (:in-loop env)

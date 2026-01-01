@@ -935,9 +935,9 @@
       (emits ","))))
 
 (defn emit-fn-method
-  [{expr :body :keys [type name params env recurs]}]
+  [{expr :body :keys [type name params env recurs async]}]
   (emit-wrap env
-    (emits "(function " (munge name) "(")
+    (emits "(" (when async "async ") "function " (munge name) "(")
     (emit-fn-params params)
     (emitln "){")
     (when type
@@ -1014,7 +1014,7 @@
       (emitln "})()"))))
 
 (defmethod emit* :fn
-  [{variadic :variadic? :keys [name env methods max-fixed-arity recur-frames in-loop loop-lets]}]
+  [{variadic :variadic? :keys [name env methods max-fixed-arity recur-frames in-loop loop-lets async]}]
   ;;fn statements get erased, serve no purpose and can pollute scope if named
   (when-not (= :statement (:context env))
     (let [recur-params (mapcat :params (filter #(and % @(:flag %)) recur-frames))
@@ -1034,7 +1034,7 @@
       (if (= 1 (count methods))
         (if variadic
           (emit-variadic-fn-method (assoc (first methods) :name name))
-          (emit-fn-method (assoc (first methods) :name name)))
+          (emit-fn-method (assoc (first methods) :name name :async async)))
         (let [name (or name (gensym))
               mname (munge name)
               maxparams (apply max-key count (map :params methods))
@@ -1046,7 +1046,7 @@
               ms (sort-by #(-> % second :params count) (seq mmap))]
           (when (= :return (:context env))
             (emits "return "))
-          (emitln "(function() {")
+          (emitln "(" (when async "async ") "function() {")
           (emitln "var " mname " = null;")
           (doseq [[n meth] ms]
             (emits "var " n " = ")
@@ -1125,8 +1125,12 @@
 
 (defn emit-let
   [{expr :body :keys [bindings env]} is-loop]
-  (let [context (:context env)]
-    (when (= :expr context) (emits "(function (){"))
+  (let [context (:context env)
+        async (:async env)]
+    (when (= :expr context)
+      (emits
+       (when async "(await ")
+       "(" (when async "async ") "function (){"))
     (binding [*lexical-renames*
               (into *lexical-renames*
                 (when (= :statement context)
@@ -1145,7 +1149,7 @@
       (when is-loop
         (emitln "break;")
         (emitln "}")))
-    (when (= :expr context) (emits "})()"))))
+    (when (= :expr context) (emits "})()" (when async ")")))))
 
 (defmethod emit* :let [ast]
   (emit-let ast false))

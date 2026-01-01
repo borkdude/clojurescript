@@ -974,6 +974,9 @@
           (reduce core/str ""))
         " */\n"))))
 
+(core/defmacro js-await [expr]
+  (core/list 'js* "(await ~{})" expr))
+
 (core/defmacro unsafe-cast
   "EXPERIMENTAL: Subject to change. Unsafely cast a value to a different type."
   [t x]
