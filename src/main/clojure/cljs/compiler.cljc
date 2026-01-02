@@ -701,10 +701,16 @@
           (emitln then "} else {")
           (emitln else "}"))))))
 
+(defn iife-open [{:keys [async]}]
+  (str (when async "(await ") "(" (when async "async ") "function (){"))
+
+(defn iife-close [{:keys [async]}]
+  (str "})()" (when async ")")))
+
 (defmethod emit* :case
   [{v :test :keys [nodes default env]}]
   (when (= (:context env) :expr)
-    (emitln "(function(){"))
+    (emitln (iife-open env)))
   (let [gs (gensym "caseval__")]
     (when (= :expr (:context env))
       (emitln "var " gs ";"))
@@ -723,12 +729,13 @@
         (emitln default)))
     (emitln "}")
     (when (= :expr (:context env))
-      (emitln "return " gs ";})()"))))
+      (emitln "return " gs ";"
+              (iife-close env)))))
 
 (defmethod emit* :throw
   [{throw :exception :keys [env]}]
   (if (= :expr (:context env))
-    (emits "(function(){throw " throw "})()")
+    (emits (iife-open env) "throw " throw (iife-close env))
     (emitln "throw " throw ";")))
 
 (def base-types
@@ -1112,7 +1119,7 @@
     (if (or name finally)
       (do
         (when (= :expr context)
-          (emits "(function (){"))
+          (emits (iife-open env)))
         (emits "try{" try "}")
         (when name
           (emits "catch (" (munge name) "){" catch "}"))
@@ -1120,7 +1127,7 @@
           (assert (not= :const (:op (ana/unwrap-quote finally))) "finally block cannot contain constant")
           (emits "finally {" finally "}"))
         (when (= :expr context)
-          (emits "})()")))
+          (emits (iife-close env))))
       (emits try))))
 
 (defn emit-let

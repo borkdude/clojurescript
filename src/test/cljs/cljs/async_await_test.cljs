@@ -25,3 +25,17 @@
            (fn [v]
              (is (= 30 v))))
           (.finally done)))))
+
+(defn ^:async await-in-throw-fn [x]
+  (inc (if (odd? x) (throw (js-await (js/Promise.resolve "dude"))) x)))
+
+(deftest await-in-throw-test
+  (async done
+    (try
+      (let [x (js-await (await-in-throw-fn 2))]
+        (is (= 3 x)))
+      (let [x (try (js-await (await-in-throw-fn 1))
+                   (catch :default e e))]
+        (is (= "dude" x)))
+      (catch :default e (prn :should-not-reach-here e))
+      (finally (done)))))
