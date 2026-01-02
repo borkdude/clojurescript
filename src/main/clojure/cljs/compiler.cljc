@@ -872,7 +872,7 @@
       (when (= :return (:context env))
         (emitln "return ("))
       (when (:def-emits-var env)
-        (emitln "(function (){"))
+        (emitln (iife-open env)))
       (emits var)
       (when init
         (emits " = "
@@ -885,7 +885,8 @@
                  {:op  :the-var
                   :env (assoc env :context :expr)}
                  var-ast))
-        (emitln ");})()"))
+        (emitln ");"
+                (iife-close env)))
       (when (= :return (:context env))
         (emitln ")"))
       ;; NOTE: JavaScriptCore does not like this under advanced compilation
@@ -970,13 +971,16 @@
       a "[" i "] = arguments[" i " + " startslice "]; ++" i ";}")
     a))
 
+;; TODO: async-await
+;; (^:async fn ([x & xs] xs) ([x] x))
+
 (defn emit-variadic-fn-method
   [{expr :body max-fixed-arity :fixed-arity variadic :variadic? :keys [type name params env recurs] :as f}]
   (emit-wrap env
     (let [name (or name (gensym))
           mname (munge name)
           delegate-name (str mname "__delegate")]
-      (emitln "(function() { ")
+      (emitln "/*x*/(function() { ")
       (emits "var " delegate-name " = function (")
       (doseq [param params]
         (emit param)
@@ -1037,7 +1041,7 @@
             (emits "return "))
         (emitln "((function (" (comma-sep (map munge loop-locals)) "){")
         (when-not (= :return (:context env))
-            (emits "return ")))
+          (emits "return ")))
       (if (= 1 (count methods))
         (if variadic
           (emit-variadic-fn-method (assoc (first methods) :name name))
