@@ -9,10 +9,19 @@
         f (fn [] 20)]
     (+ n x y (f))))
 
-(deftest async-await-test
+(deftest async-await-defn-test
   (async done
     (-> (foo 10)
         (.then
             (fn [v]
               (is (= 61 v))))
         (.finally done))))
+
+(deftest async-await-fn-test
+  (async done
+    (let [f (^:async fn [x] (+ x (js-await (js/Promise.resolve 20))))]
+      (-> (f 10)
+          (.then
+           (fn [v]
+             (is (= 30 v))))
+          (.finally done)))))

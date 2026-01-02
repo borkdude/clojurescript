@@ -2302,8 +2302,15 @@ x                          (not (contains? ret :info)))
 (defn analyze-fn-methods-pass2 [menv locals type meths]
   (analyze-fn-methods-pass2* menv locals type meths))
 
+;; #?(:clj (def debug? (atom nil)))
+;; #?(:clj (defmacro debug []
+;;          (reset! debug? true)))
+
 (defmethod parse 'fn*
   [op env [_ & args :as form] name _]
+  #_(when @debug?
+    (binding [*out* *err*]
+      (println "dude" name :form form (meta (first form)))))
   (let [named-fn?    (symbol? (first args))
         [name meths] (if named-fn?
                          [(first args) (next args)]
@@ -2325,7 +2332,8 @@ x                          (not (contains? ret :info)))
         type         (::type form-meta)
         proto-impl   (::protocol-impl form-meta)
         proto-inline (::protocol-inline form-meta)
-        async (:async (meta name))
+        async (or (:async (meta name))
+                  (:async (meta (first form))))
         menv         (-> env
                          (cond->
                            (> (count meths) 1)

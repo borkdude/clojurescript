@@ -959,6 +959,18 @@
           (is (= 2 (count (re-seq #"\$1\(.*?\)" source))))))
       (test/delete-out-files out))))
 
+(comment
+  (let [out (.getPath (io/file "/tmp" "cljs-async-await-out"))
+        cenv (env/default-compiler-env)
+        {:keys [inputs opts]} {:inputs (str (io/file "src" "test" "cljs_build"))
+                               :opts {:main 'cljs-async-await.core
+                                      :output-dir out
+                                      :optimizations :none
+                                      :closure-warnings {:check-types :off}}}]
+    (build/build (build/inputs (io/file inputs "cljs_async_await/core.cljs")) opts cenv))
+
+  )
+
 #_(deftest test-advanced-source-maps
   (testing "Test that the `sources` of the final merged source map matches the
   one in the original Closure Compiler generated advanced source map"
