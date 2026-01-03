@@ -2332,8 +2332,11 @@ x                          (not (contains? ret :info)))
         type         (::type form-meta)
         proto-impl   (::protocol-impl form-meta)
         proto-inline (::protocol-inline form-meta)
-        async (or (:async (meta name))
-                  (:async (meta (first form))))
+        async (or
+               ;; NOTE: adding async on fn form turns it into a MetaFn which isn't great for interop, let's discourage it - Michiel Borkent
+               #_(:async (meta form))
+               (:async (meta name))
+               (:async (meta (first form))))
         menv         (-> env
                          (cond->
                            (> (count meths) 1)
