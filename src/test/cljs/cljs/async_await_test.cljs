@@ -9,33 +9,72 @@
         f (fn [] 20)]
     (+ n x y (f))))
 
-(deftest async-await-defn-test
+(deftest defn-test
   (async done
-    (-> (foo 10)
-        (.then
-            (fn [v]
-              (is (= 61 v))))
-        (.finally done))))
+    (try
+      (let [v (js-await (foo 10))]
+        (is (= 61 v)))
+      (let [v (js-await (apply foo [10]))]
+        (is (= 61 v)))
+      (catch :default e (prn :should-not-reach-here e))
+      (finally (done)))))
 
-(deftest async-await-fn-test
+(deftest fn-test
   (async done
-    (let [f (^:async fn [x] (+ x (js-await (js/Promise.resolve 20))))]
-      (-> (f 10)
-          (.then
-           (fn [v]
-             (is (= 30 v))))
-          (.finally done)))))
+    (try
+      (let [f (^:async fn [x] (+ x (js-await (js/Promise.resolve 20))))
+            v (js-await (f 10))
+            v2 (js-await (apply f [10]))]
+        (is (= 30 v v2)))
+      (catch :default e (prn :should-not-reach-here e))
+      (finally (done)))))
 
-(defn ^:async await-in-throw-fn [x]
-  (inc (if (odd? x) (throw (js-await (js/Promise.resolve "dude"))) x)))
+(deftest varargs-fn-test
+  (async done
+    (try
+      (let [f (^:async fn [x & xs] (apply + x (js-await (js/Promise.resolve 20)) xs))
+            v (js-await (f 10))
+            v2 (js-await (apply f [10]))
+            v3 (js-await (f 5 5))
+            v4 (js-await (apply f [5 5]))]
+        (is (= 30 v v2 v3 v4)))
+      (catch :default e (prn :should-not-reach-here e))
+      (finally (done)))))
+
+(deftest variadic-fn-test
+  (async done
+    (try (let [f (^:async fn
+                  ([x] (js-await (js/Promise.resolve x)))
+                  ([x y] (cons (js-await (js/Promise.resolve x)) [y])))]
+           (is (= [1 1 [1 2] [1 2]]
+                  [(js-await (f 1))
+                   (js-await (apply f [1]))
+                   (js-await (f 1 2))
+                   (js-await (apply f [1 2]))])))
+         (catch :default e (prn :should-not-reach-here e))
+         (finally (done)))))
+
+(deftest variadic-varargs-fn-test
+  (async done
+    (try (let [f (^:async fn
+                  ([x] (js-await (js/Promise.resolve x)))
+                  ([x & xs] (cons (js-await (js/Promise.resolve x)) xs)))]
+           (is (= [1 1 [1 2 3] [1 2 3]]
+                  [(js-await (f 1))
+                   (js-await (apply f [1]))
+                   (js-await (f 1 2 3))
+                   (js-await (apply f [1 2 3]))])))
+         (catch :default e (prn :should-not-reach-here e))
+         (finally (done)))))
 
 (deftest await-in-throw-test
   (async done
-    (try
-      (let [x (js-await (await-in-throw-fn 2))]
-        (is (= 3 x)))
-      (let [x (try (js-await (await-in-throw-fn 1))
-                   (catch :default e e))]
-        (is (= "dude" x)))
-      (catch :default e (prn :should-not-reach-here e))
-      (finally (done)))))
+    (let [f (^:async fn [x] (inc (if (odd? x) (throw (js-await (js/Promise.resolve "dude"))) x)))]
+      (try
+        (let [x (js-await (f 2))]
+          (is (= 3 x)))
+        (let [x (try (js-await (f 1))
+                     (catch :default e e))]
+          (is (= "dude" x)))
+        (catch :default e (prn :should-not-reach-here e))
+        (finally (done))))))

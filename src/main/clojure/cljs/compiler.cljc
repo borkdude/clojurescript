@@ -971,17 +971,14 @@
       a "[" i "] = arguments[" i " + " startslice "]; ++" i ";}")
     a))
 
-;; TODO: async-await
-;; (^:async fn ([x & xs] xs) ([x] x))
-
 (defn emit-variadic-fn-method
-  [{expr :body max-fixed-arity :fixed-arity variadic :variadic? :keys [type name params env recurs] :as f}]
+  [{expr :body max-fixed-arity :fixed-arity variadic :variadic? :keys [type name params env recurs async] :as f}]
   (emit-wrap env
     (let [name (or name (gensym))
           mname (munge name)
           delegate-name (str mname "__delegate")]
-      (emitln "/*x*/(function() { ")
-      (emits "var " delegate-name " = function (")
+      (emitln "(function() { ")
+      (emits "var " delegate-name " = " (when async "async ") "function (")
       (doseq [param params]
         (emit param)
         (when-not (= param (last params)) (emits ",")))
@@ -995,10 +992,11 @@
         (emitln "}"))
       (emitln "};")
 
-      (emitln "var " mname " = function (" (comma-sep
-                                             (if variadic
-                                               (concat (butlast params) ['var_args])
-                                               params)) "){")
+      (emitln "var " mname " = " (when async "async ")  "function ("
+              (comma-sep
+               (if variadic
+                 (concat (butlast params) ['var_args])
+                 params)) "){")
       (when type
         (emitln "var self__ = this;"))
       (when variadic
@@ -1044,7 +1042,7 @@
           (emits "return ")))
       (if (= 1 (count methods))
         (if variadic
-          (emit-variadic-fn-method (assoc (first methods) :name name))
+          (emit-variadic-fn-method (assoc (first methods) :name name :async async))
           (emit-fn-method (assoc (first methods) :name name :async async)))
         (let [name (or name (gensym))
               mname (munge name)
@@ -1057,17 +1055,19 @@
               ms (sort-by #(-> % second :params count) (seq mmap))]
           (when (= :return (:context env))
             (emits "return "))
-          (emitln "(" (when async "async ") "function() {")
+          (emitln "(function() {")
           (emitln "var " mname " = null;")
           (doseq [[n meth] ms]
-            (emits "var " n " = ")
-            (if (:variadic? meth)
-              (emit-variadic-fn-method meth)
-              (emit-fn-method meth))
+            (let [meth (assoc meth :async async)]
+              (emits "var " n " = ")
+              (if (:variadic? meth)
+                (emit-variadic-fn-method meth)
+                (emit-fn-method meth)))
             (emitln ";"))
-            (emitln mname " = function(" (comma-sep (if variadic
-                                                      (concat (butlast maxparams) ['var_args])
-                                                      maxparams)) "){")
+          (emitln mname " = " (when async "async ") "function("
+                  (comma-sep (if variadic
+                               (concat (butlast maxparams) ['var_args])
+                               maxparams)) "){")
           (when variadic
             (emits "var ")
             (emit (last maxparams))

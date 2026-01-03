@@ -1,4 +1,5 @@
-- [ ] check / agree on syntax over multiple dialects of Clojure (Dart, CLR)
 - [ ] Go over compiler.cljc and make hard-coded IIFEs compatible with async await
+  - [ ] loop test
+- [ ] check / agree on syntax over multiple dialects of Clojure (Dart, CLR)
 - [ ] Optional: warn about using `js-await` on non-async context?
 - [ ] Write JIRA issue + patch
