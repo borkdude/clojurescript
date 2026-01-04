@@ -975,6 +975,7 @@
         " */\n"))))
 
 (core/defmacro await [expr]
+  (core/assert (:async &env) "await can only be used in async contexts")
   (core/list 'js* "(await ~{})" expr))
 
 (core/defmacro unsafe-cast
