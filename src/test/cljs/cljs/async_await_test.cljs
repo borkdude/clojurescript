@@ -103,3 +103,18 @@
         (is (= 12 v)))
       (catch :default e (prn :should-not-reach-here e))
       (finally (done)))))
+
+(deftest await-in-loop-test
+  (async done
+    (try
+      (let [f (^:async fn [] (loop [xs (map #(js/Promise.resolve %) [1 2 3])
+                                    ys []]
+                               (if (seq xs)
+                                 (let [x (first xs)
+                                       v (await x)]
+                                   (recur (rest xs) (conj ys v)))
+                                 ys)))
+            v (await (f))]
+        (is (= [1 2 3] v)))
+      (catch :default e (prn :should-not-reach-here e))
+      (finally (done)))))
