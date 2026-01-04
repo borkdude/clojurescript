@@ -1136,12 +1136,9 @@
 
 (defn emit-let
   [{expr :body :keys [bindings env]} is-loop]
-  (let [context (:context env)
-        async (:async env)]
+  (let [context (:context env)]
     (when (= :expr context)
-      (emits
-       (when async "(await ")
-       "(" (when async "async ") "function (){"))
+      (emits (iife-open env)))
     (binding [*lexical-renames*
               (into *lexical-renames*
                 (when (= :statement context)
@@ -1160,7 +1157,7 @@
       (when is-loop
         (emitln "break;")
         (emitln "}")))
-    (when (= :expr context) (emits "})()" (when async ")")))))
+    (when (= :expr context) (emits (iife-close env)))))
 
 (defmethod emit* :let [ast]
   (emit-let ast false))
