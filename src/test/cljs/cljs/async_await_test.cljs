@@ -78,3 +78,15 @@
           (is (= "dude" x)))
         (catch :default e (prn :should-not-reach-here e))
         (finally (done))))))
+
+(deftest await-in-do-test
+  (async done
+    (try
+      (let [a (atom 0)
+            f (^:async fn [] (let [_ (do (swap! a inc)
+                                         (swap! a + (js-await (js/Promise.resolve 2))))]
+                               @a))
+            v (js-await (f))]
+        (is (= 3 v)))
+      (catch :default e (prn :should-not-reach-here e))
+      (finally (done)))))

@@ -1112,10 +1112,10 @@
 (defmethod emit* :do
   [{:keys [statements ret env]}]
   (let [context (:context env)]
-    (when (and (seq statements) (= :expr context)) (emitln "(function (){"))
+    (when (and (seq statements) (= :expr context)) (emitln (iife-open env)))
     (doseq [s statements] (emitln s))
     (emit ret)
-    (when (and (seq statements) (= :expr context)) (emitln "})()"))))
+    (when (and (seq statements) (= :expr context)) (emitln (iife-close env)))))
 
 (defmethod emit* :try
   [{try :body :keys [env catch name finally]}]
