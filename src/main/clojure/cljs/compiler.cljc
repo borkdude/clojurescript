@@ -1178,11 +1178,11 @@
 (defmethod emit* :letfn
   [{expr :body :keys [bindings env]}]
   (let [context (:context env)]
-    (when (= :expr context) (emits "(function (){"))
+    (when (= :expr context) (emits (iife-open env)))
     (doseq [{:keys [init] :as binding} bindings]
       (emitln "var " (munge binding) " = " init ";"))
     (emits expr)
-    (when (= :expr context) (emits "})()"))))
+    (when (= :expr context) (emits (iife-close env)))))
 
 (defn protocol-prefix [psym]
   (symbol (str (-> (str psym)

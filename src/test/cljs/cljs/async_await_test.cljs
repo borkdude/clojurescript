@@ -90,3 +90,16 @@
         (is (= 3 v)))
       (catch :default e (prn :should-not-reach-here e))
       (finally (done)))))
+
+(deftest await-let-fn-test
+  (async done
+    (try
+      (let [f (^:async fn [] (let [v
+                                   ;; force letfn in expr position
+                                   (letfn [(^:async f [] (inc (js-await (js/Promise.resolve 10))))]
+                                     (inc (js-await (f))))]
+                               v))
+            v (js-await (f))]
+        (is (= 12 v)))
+      (catch :default e (prn :should-not-reach-here e))
+      (finally (done)))))
