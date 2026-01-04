@@ -7,7 +7,7 @@
 ;   You must not remove this notice, or any other, from this software.
 
 (ns cljs.core
-  (:refer-clojure :exclude [-> ->> .. amap and areduce alength aclone assert assert-args binding bound-fn case comment
+  (:refer-clojure :exclude [-> ->> .. amap and areduce alength aclone assert await binding bound-fn case comment
                             cond condp declare definline definterface defmethod defmulti defn defn- defonce
                             defprotocol defrecord defstruct deftype delay destructure doseq dosync dotimes doto
                             extend-protocol extend-type fn for future gen-class gen-interface
@@ -974,7 +974,7 @@
           (reduce core/str ""))
         " */\n"))))
 
-(core/defmacro js-await [expr]
+(core/defmacro await [expr]
   (core/list 'js* "(await ~{})" expr))
 
 (core/defmacro unsafe-cast
