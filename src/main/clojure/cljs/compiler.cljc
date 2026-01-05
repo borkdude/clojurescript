@@ -943,19 +943,20 @@
       (emits ","))))
 
 (defn emit-fn-method
-  [{expr :body :keys [type name params env recurs async]}]
-  (emit-wrap env
-    (emits "(" (when async "async ") "function " (munge name) "(")
-    (emit-fn-params params)
-    (emitln "){")
-    (when type
-      (emitln "var self__ = this;"))
-    (when recurs (emitln "while(true){"))
-    (emits expr)
-    (when recurs
-      (emitln "break;")
-      (emitln "}"))
-    (emits "})")))
+  [{expr :body :keys [type name params env recurs]}]
+  (let [async (:async env)]
+    (emit-wrap env
+               (emits "(" (when async "async ") "function " (munge name) "(")
+               (emit-fn-params params)
+               (emitln "){")
+               (when type
+                 (emitln "var self__ = this;"))
+               (when recurs (emitln "while(true){"))
+               (emits expr)
+               (when recurs
+                 (emitln "break;")
+                 (emitln "}"))
+               (emits "})"))))
 
 (defn emit-arguments-to-array
   "Emit code that copies function arguments into an array starting at an index.
@@ -972,11 +973,12 @@
     a))
 
 (defn emit-variadic-fn-method
-  [{expr :body max-fixed-arity :fixed-arity variadic :variadic? :keys [type name params env recurs async] :as f}]
+  [{expr :body max-fixed-arity :fixed-arity variadic :variadic? :keys [type name params env recurs] :as f}]
   (emit-wrap env
     (let [name (or name (gensym))
           mname (munge name)
-          delegate-name (str mname "__delegate")]
+          delegate-name (str mname "__delegate")
+          async (:async env)]
       (emitln "(function() { ")
       (emits "var " delegate-name " = " (when async "async ") "function (")
       (doseq [param params]
@@ -1023,7 +1025,7 @@
       (emitln "})()"))))
 
 (defmethod emit* :fn
-  [{variadic :variadic? :keys [name env methods max-fixed-arity recur-frames in-loop loop-lets async]}]
+  [{variadic :variadic? :keys [name env methods max-fixed-arity recur-frames in-loop loop-lets]}]
   ;;fn statements get erased, serve no purpose and can pollute scope if named
   (when-not (= :statement (:context env))
     (let [recur-params (mapcat :params (filter #(and % @(:flag %)) recur-frames))
@@ -1033,7 +1035,8 @@
                  (when (or in-loop (seq recur-params))
                    (mapcat :params loop-lets)))
                (map munge)
-               seq)]
+               seq)
+          async (:async env)]
       (when loop-locals
         (when (= :return (:context env))
             (emits "return "))
@@ -1042,8 +1045,8 @@
           (emits "return ")))
       (if (= 1 (count methods))
         (if variadic
-          (emit-variadic-fn-method (assoc (first methods) :name name :async async))
-          (emit-fn-method (assoc (first methods) :name name :async async)))
+          (emit-variadic-fn-method (assoc (first methods) :name name))
+          (emit-fn-method (assoc (first methods) :name name)))
         (let [name (or name (gensym))
               mname (munge name)
               maxparams (apply max-key count (map :params methods))
@@ -1058,11 +1061,10 @@
           (emitln "(function() {")
           (emitln "var " mname " = null;")
           (doseq [[n meth] ms]
-            (let [meth (assoc meth :async async)]
-              (emits "var " n " = ")
-              (if (:variadic? meth)
-                (emit-variadic-fn-method meth)
-                (emit-fn-method meth)))
+            (emits "var " n " = ")
+            (if (:variadic? meth)
+              (emit-variadic-fn-method meth)
+              (emit-fn-method meth))
             (emitln ";"))
           (emitln mname " = " (when async "async ") "function("
                   (comma-sep (if variadic
