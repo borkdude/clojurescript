@@ -98,7 +98,7 @@
                                    ;; force letfn in expr position
                                    (letfn [(^:async f [] (inc (await (js/Promise.resolve 10))))]
                                      (inc (await (f))))]
-                               v))
+                               (identity v)))
             v (await (f))]
         (is (= 12 v)))
       (catch :default e (prn :should-not-reach-here e))
@@ -107,14 +107,32 @@
 (deftest await-in-loop-test
   (async done
     (try
-      (let [f (^:async fn [] (loop [xs (map #(js/Promise.resolve %) [1 2 3])
-                                    ys []]
-                               (if (seq xs)
-                                 (let [x (first xs)
-                                       v (await x)]
-                                   (recur (rest xs) (conj ys v)))
-                                 ys)))
+      (let [f (^:async fn [] (let [x
+                                   ;; force loop in expr position
+                                   (loop [xs (map #(js/Promise.resolve %) [1 2 3])
+                                          ys []]
+                                     (if (seq xs)
+                                       (let [x (first xs)
+                                             v (await x)]
+                                         (recur (rest xs) (conj ys v)))
+                                       ys))]
+                               (identity x)))
             v (await (f))]
         (is (= [1 2 3] v)))
+      (catch :default e (prn :should-not-reach-here e))
+      (finally (done)))))
+
+(def ^:dynamic *foo* true)
+
+(deftest dynamic-binding-test
+  (async done
+    (try
+      (let [f (^:async fn []
+               (binding [*foo* false]
+                 (let [x (let [x *foo*]
+                           (await (js/Promise.resolve x)))]
+                   x)))
+            v (await (f))]
+        (is (false? v)))
       (catch :default e (prn :should-not-reach-here e))
       (finally (done)))))
