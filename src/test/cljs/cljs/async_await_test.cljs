@@ -121,19 +121,3 @@
         (is (= [1 2 3] v)))
       (catch :default e (prn :should-not-reach-here e))
       (finally (done)))))
-
-;; TODO: think about dyn vars more
-#_(deftest dynamic-binding-test
-  (async done
-    (try
-      (let [f (^:async fn []
-               (with-out-str
-                 (print (await (js/Promise. (fn [resolve]
-                                              (js/setTimeout #(do
-                                                                (print "in promise;")
-                                                                (resolve "resolved")) 1000)))))))
-            promises (repeatedly 1000 f)
-            strs (await (js/Promise.all promises))]
-        (is (= (repeat 1000 "in promise;resolved") (vec strs))))
-      (catch :default e (prn :should-not-reach-here e))
-      (finally (done)))))
