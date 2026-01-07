@@ -3215,7 +3215,7 @@
                             (. self# (~(get-delegate) (seq ~restarg))))))))]
        `(do
           (set! (. ~sym ~(get-delegate-prop))
-            (fn (~(vec sig) ~@body)))
+                (~(with-meta `fn (meta sym)) (~(vec sig) ~@body)))
           ~@(core/when solo
               `[(set! (. ~sym ~'-cljs$lang$maxFixedArity)
                   ~(core/dec (count sig)))])

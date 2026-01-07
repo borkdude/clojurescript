@@ -12,7 +12,8 @@
   #?(:cljs (:require-macros [cljs.analyzer.macros
                              :refer [allowing-redef disallowing-ns* disallowing-recur
                                      no-warn with-warning-handlers wrapping-errors]]
-             [cljs.env.macros :refer [ensure]]))
+                            [cljs.env.macros :refer [ensure]]
+                            [cljs.analyzer]))
   #?(:clj  (:require [cljs.analyzer.impl :as impl]
                      [cljs.analyzer.impl.namespaces :as nses]
                      [cljs.analyzer.passes.and-or :as and-or]
@@ -2237,6 +2238,10 @@ x                          (not (contains? ret :info)))
 (defn analyze-fn-method-body [env form recur-frames]
   (binding [*recur-frames* recur-frames]
     (analyze env form)))
+
+(def debug? (atom false))
+(defmacro debug []
+  (reset! debug? true))
 
 (defn- analyze-fn-method [env locals form type analyze-body?]
   (let [param-names     (first form)

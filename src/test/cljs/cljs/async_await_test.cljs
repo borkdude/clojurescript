@@ -19,6 +19,26 @@
       (catch :default e (prn :should-not-reach-here e))
       (finally (done)))))
 
+(defn ^:async variadic-foo [n & ns]
+  (let [x (await (js/Promise.resolve n))
+        y (let [y (await (js/Promise.resolve (apply + ns)))]
+            (inc y))
+        ;; not async
+        f (fn [] 20)]
+    (+ n x y (f))))
+
+(deftest variadic-defn-test
+  (async done
+    (try
+      (let [v (await (variadic-foo 10))]
+        (is (= 41 v)))
+      (let [v (await (variadic-foo 10 1 2 3))]
+        (is (= 47 v)))
+      (let [v (await (apply variadic-foo [10 1 2 3]))]
+        (is (= 47 v)))
+      (catch :default e (prn :should-not-reach-here e))
+      (finally (done)))))
+
 (deftest fn-test
   (async done
     (try
