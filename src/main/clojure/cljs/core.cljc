@@ -3296,7 +3296,7 @@
                             {:variadic? false :fixed-arity (count sig)})
                         ~(symbol (core/str "-cljs$core$IFn$_invoke$arity$"
                                    (count sig))))
-                      (fn ~method))))]
+                      (~(with-meta `fn (core/meta name)) ~method))))]
     (core/let [rname    (symbol (core/str ana/*cljs-ns*) (core/str name))
                arglists (map first fdecl)
                macro?   (:macro meta)

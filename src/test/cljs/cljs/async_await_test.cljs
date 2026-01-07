@@ -39,6 +39,24 @@
       (catch :default e (prn :should-not-reach-here e))
       (finally (done)))))
 
+(defn ^:async multi-arity-foo
+  ([n] (await n))
+  ([n x] (+ (await n) x)))
+
+(deftest multi-arity-defn-test
+  (async done
+    (try
+      (let [v (await (multi-arity-foo 10))]
+        (is (= 10 v)))
+      (let [v (await (multi-arity-foo 10 20))]
+        (is (= 30 v)))
+      (let [v (await (apply multi-arity-foo [10]))]
+        (is (= 10 v)))
+      (let [v (await (apply multi-arity-foo [10 20]))]
+        (is (= 30 v)))
+      (catch :default e (prn :should-not-reach-here e))
+      (finally (done)))))
+
 (deftest fn-test
   (async done
     (try
