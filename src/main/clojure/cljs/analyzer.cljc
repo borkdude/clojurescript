@@ -2239,10 +2239,6 @@ x                          (not (contains? ret :info)))
   (binding [*recur-frames* recur-frames]
     (analyze env form)))
 
-(def debug? (atom false))
-(defmacro debug []
-  (reset! debug? true))
-
 (defn- analyze-fn-method [env locals form type analyze-body?]
   (let [param-names     (first form)
         variadic        (boolean (some '#{&} param-names))
