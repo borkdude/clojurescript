@@ -12,7 +12,7 @@
   #?(:cljs (:require-macros [cljs.analyzer.macros
                              :refer [allowing-redef disallowing-ns* disallowing-recur
                                      no-warn with-warning-handlers wrapping-errors]]
-                            [cljs.env.macros :refer [ensure]]))
+             [cljs.env.macros :refer [ensure]]))
   #?(:clj  (:require [cljs.analyzer.impl :as impl]
                      [cljs.analyzer.impl.namespaces :as nses]
                      [cljs.analyzer.passes.and-or :as and-or]
