@@ -1200,6 +1200,7 @@
               (emit init)
               (emitln ";")))))
       (when is-loop (emitln "while(true){"))
+      ;; TODO: what if is-loop, then we should not do anything with assignment target
       (binding [*out* *err*]
         (println (keys expr)))
       (if (supports-assign-target? expr)
