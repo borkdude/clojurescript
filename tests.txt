@@ -1,0 +1,6 @@
+(str (fn [] (let [x (if (odd? 1) 1 2)] x)))
+"function (){\nvar x;\nif(cljs.core.odd_QMARK_.call(null,(1))){\nx = (1);\n} else {\nx = (2);\n}\nreturn x;\n}"
+
+TODO:
+(str (fn [] (let [x (let [y 1] y)] x)))
+"function (){\nvar x = (function (){var y = (1);\nreturn y;\n})();\nreturn x;\n}"
