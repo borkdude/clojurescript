@@ -448,7 +448,7 @@
 ;; - Leaf ops via emit-wrap (added incrementally)
 (def ^:private assign-target-ops
   #{;; Complex ops (explicit handling) - start with just :if
-    :if
+    :if :let
     ;; TODO: add leaf ops after verifying :if works
     ;; TODO: add :do and :let once they handle :assign-target
     })
@@ -1174,8 +1174,10 @@
 
 (defn emit-let
   [{expr :body :keys [bindings env]} is-loop]
-  (let [context (:context env)]
-    (when (= :expr context) (emits "(function (){"))
+  (let [context (:context env)
+        assign-target (:assign-target env)]
+    (when (and (= :expr context)
+               (not assign-target)) (emits "(function (){"))
     (binding [*lexical-renames*
               (into *lexical-renames*
                 (when (= :statement context)
@@ -1198,11 +1200,16 @@
               (emit init)
               (emitln ";")))))
       (when is-loop (emitln "while(true){"))
-      (emits expr)
+      (binding [*out* *err*]
+        (println (keys expr)))
+      (if (supports-assign-target? expr)
+        
+        (emits expr))
       (when is-loop
         (emitln "break;")
         (emitln "}")))
-    (when (= :expr context) (emits "})()"))))
+    (when (and (= :expr context)
+               (not assign-target)) (emits "})()"))))
 
 (defmethod emit* :let [ast]
   (emit-let ast false))
