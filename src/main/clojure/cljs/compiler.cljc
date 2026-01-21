@@ -443,12 +443,42 @@
       (emit-js-object items #(fn [] (emit-constant %)))
       (emit-js-array items emit-constants-comma-sep))))
 
+;; Ops that support :assign-target optimization
+;; - Complex ops handle it explicitly and propagate to children
+;; - Leaf ops via emit-wrap (added incrementally)
+(def ^:private assign-target-ops
+  #{;; Complex ops (explicit handling) - start with just :if
+    :if
+    ;; TODO: add leaf ops after verifying :if works
+    ;; TODO: add :do and :let once they handle :assign-target
+    })
+
+(defn supports-assign-target?
+  "Returns true if the given AST op supports :assign-target optimization."
+  [ast]
+  (contains? assign-target-ops (:op ast)))
+
 #?(:clj
    (defmacro emit-wrap [env & body]
-     `(let [env# ~env]
-        (when (= :return (:context env#)) (emits "return "))
-        ~@body
-        (when-not (= :expr (:context env#)) (emitln ";")))))
+     `(let [env# ~env
+            assign-target# (:assign-target env#)]
+        (cond
+          assign-target#
+          (do
+            (emits assign-target# " = ")
+            ~@body
+            (emitln ";"))
+          
+          (= :return (:context env#))
+          (do
+            (emits "return ")
+            ~@body
+            (emitln ";"))
+          
+          :else
+          (do
+            ~@body
+            (when-not (= :expr (:context env#)) (emitln ";")))))))
 
 (defmethod emit* :no-op [m])
 
@@ -684,16 +714,50 @@
     (or ('#{boolean seq} (ana/js-prim-ctor->tag tag tag))
         (truthy-constant? e))))
 
+(defn- emit-if-branch-assign
+  "Emit a branch of an if with assign-target. If the branch supports
+   assign-target, propagate it. Otherwise emit as expression assignment."
+  [assign-target branch]
+  (if (supports-assign-target? branch)
+    (emit (assoc-in branch [:env :assign-target] assign-target))
+    (emitln assign-target " = " (assoc-in branch [:env :context] :expr) ";")))
+
 (defmethod emit* :if
   [{:keys [test then else env unchecked]}]
   (let [context (:context env)
+        assign-target (:assign-target env)
         checked (not (or unchecked (safe-test? env test)))]
     (cond
-      (truthy-constant? test) (emitln then)
-      (falsey-constant? test) (emitln else)
+      ;; Constant test cases
+      (truthy-constant? test)
+      (if assign-target
+        (emit-if-branch-assign assign-target then)
+        (emitln then))
+      
+      (falsey-constant? test)
+      (if assign-target
+        (emit-if-branch-assign assign-target else)
+        (emitln else))
+      
       :else
-      (if (= :expr context)
+      (cond
+        ;; assign-target: emit if/else with assignments
+        assign-target
+        (do
+          (if checked
+            (emitln "if(cljs.core.truth_(" test ")){")
+            (emitln "if(" test "){"))
+          (emit-if-branch-assign assign-target then)
+          (emitln "} else {")
+          (emit-if-branch-assign assign-target else)
+          (emitln "}"))
+        
+        ;; expr context: ternary
+        (= :expr context)
         (emits "(" (when checked "cljs.core.truth_") "(" test ")?" then ":" else ")")
+        
+        ;; statement/return context: if/else
+        :else
         (do
           (if checked
             (emitln "if(cljs.core.truth_(" test ")){")
@@ -1137,9 +1201,17 @@
                           (gensym (str name "-")))))
                     bindings)))]
       (doseq [{:keys [init] :as binding} bindings]
-        (emits "var ")
-        (emit binding) ; Binding will be treated as a var
-        (emitln " = " init ";"))
+        (let [mname (munge binding)]
+          ;; Use assign-target optimization for supported ops (avoids IIFE/ternary)
+          (if (supports-assign-target? init)
+            (do
+              (emitln "var " mname ";")
+              (emit (assoc-in init [:env :assign-target] mname)))
+            ;; Default: emit as var = expr
+            (do
+              (emits "var " mname " = ")
+              (emit init)
+              (emitln ";")))))
       (when is-loop (emitln "while(true){"))
       (emits expr)
       (when is-loop
