@@ -1203,8 +1203,8 @@
       (binding [*out* *err*]
         (println (keys expr)))
       (if (supports-assign-target? expr)
-        
-        (emits expr))
+        (emit (assoc-in expr [:env :assign-target] assign-target))
+        (emitln assign-target " = " (assoc-in expr [:env :context] :expr) ";"))
       (when is-loop
         (emitln "break;")
         (emitln "}")))
