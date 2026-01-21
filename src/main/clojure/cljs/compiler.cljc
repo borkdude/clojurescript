@@ -460,25 +460,10 @@
 
 #?(:clj
    (defmacro emit-wrap [env & body]
-     `(let [env# ~env
-            assign-target# (:assign-target env#)]
-        (cond
-          assign-target#
-          (do
-            (emits assign-target# " = ")
-            ~@body
-            (emitln ";"))
-          
-          (= :return (:context env#))
-          (do
-            (emits "return ")
-            ~@body
-            (emitln ";"))
-          
-          :else
-          (do
-            ~@body
-            (when-not (= :expr (:context env#)) (emitln ";")))))))
+     `(let [env# ~env]
+        (when (= :return (:context env#)) (emits "return "))
+        ~@body
+        (when-not (= :expr (:context env#)) (emitln ";")))))
 
 (defmethod emit* :no-op [m])
 
