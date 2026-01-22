@@ -2453,7 +2453,7 @@ x                          (not (contains? ret :info)))
     (if (<= (count exprs) 1)
       (let [ret      (analyze env (first exprs))
             children [:statements :ret]]
-        {:op :do
+        ret #_{:op :do
          :env env
          :form form
          :statements statements :ret ret

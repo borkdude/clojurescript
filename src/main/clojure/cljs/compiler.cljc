@@ -467,6 +467,10 @@
 
 (defmethod emit* :no-op [m])
 
+#?(:clj (defn debug [& xs]
+          (binding [*out* *err*]
+            (apply prn xs))))
+
 (defn emit-var
   [{:keys [info env form] :as ast}]
   (if-let [const-expr (:const-expr ast)]
@@ -1166,7 +1170,9 @@
         (when name
           (emits "catch (" (munge name) "){" catch "}"))
         (when finally
-          (assert (not= :const (:op (ana/unwrap-quote finally))) "finally block cannot contain constant")
+          #_(debug :op (:op (ana/unwrap-quote finally)))
+          #_(assert (not= :const (:op (ana/unwrap-quote finally)))
+                  (str "finally block cannot contain constant: " (:form finally)))
           (emits "finally {" finally "}"))
         (when (= :expr context)
           (emits "})()")))
@@ -1200,12 +1206,11 @@
               (emit init)
               (emitln ";")))))
       (when is-loop (emitln "while(true){"))
-      ;; TODO: what if is-loop, then we should not do anything with assignment target
-      (binding [*out* *err*]
-        (println (keys expr)))
       (if (supports-assign-target? expr)
         (emit (assoc-in expr [:env :assign-target] assign-target))
-        (emitln assign-target " = " (assoc-in expr [:env :context] :expr) ";"))
+        (if assign-target
+          (emitln assign-target " = " (assoc-in expr [:env :context] :expr) ";")
+          (emits expr)))
       (when is-loop
         (emitln "break;")
         (emitln "}")))
