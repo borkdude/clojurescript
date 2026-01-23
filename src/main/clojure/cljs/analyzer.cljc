@@ -2551,7 +2551,8 @@ x                          (not (contains? ret :info)))
   [encl-env [_ bindings & exprs :as form] is-loop widened-tags]
   (when-not (and (vector? bindings) (even? (count bindings)))
     (throw (error encl-env "bindings must be vector of even number of elements")))
-  (let [await-called (atom false)
+  (let [prev-await-called *await-called*
+        await-called (atom false)
         context      (:context encl-env)
         op           (if (true? is-loop) :loop :let)
         bindings     (if widened-tags
@@ -2586,7 +2587,10 @@ x                          (not (contains? ret :info)))
                            (analyze-let-body env context exprs recur-frames loop-lets))
                          (analyze-let-body env context exprs recur-frames loop-lets)))
         children     [:bindings :body]
-        nil->any     (fnil identity 'any)]
+        nil->any     (fnil identity 'any)
+        await-called? @await-called]
+    ;; propogate await-called to surrounding expression
+    (when await-called? (reset! prev-await-called true))
     (if (and is-loop
              (not widened-tags)
              (not= (mapv nil->any @(:tags recur-frame))
