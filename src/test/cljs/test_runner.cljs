@@ -54,7 +54,7 @@
             [cljs.metadata-test]
             [cljs.npm-deps-test]
             [cljs.other-functions-test]
-            #_[cljs.predicates-test]
+            [cljs.predicates-test]
             [cljs.tagged-literals-test]
             [cljs.test-test]
             [static.core-test]
@@ -119,7 +119,7 @@
   'cljs.npm-deps-test
   'cljs.other-functions-test
   'cljs.pprint-test
-  #_'cljs.predicates-test
+  'cljs.predicates-test
   'cljs.syntax-quote-test
   'cljs.tagged-literals-test
   'cljs.test-test
