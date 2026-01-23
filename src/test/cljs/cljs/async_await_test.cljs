@@ -186,6 +186,6 @@
                      y (let [x 2]
                          (+ x (let [x (await (js/Promise.resolve 1))] x)))]
                  (await (+ x y))))]
-        (is (= 7 (await (f)))))
+        (is (= 4 (await (f)))))
       (catch :default _ (is false))
-      (finally done))))
+      (finally (done)))))
