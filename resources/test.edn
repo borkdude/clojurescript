@@ -1,4 +1,5 @@
 {:optimizations :advanced
+ :pseudo-names true
  :main test-runner
  :output-to "builds/out-adv/core-advanced-test.js"
  :output-dir "builds/out-adv"

@@ -177,3 +177,15 @@
         (is (= [1 2 3] v)))
       (catch :default e (prn :should-not-reach-here e))
       (finally (done)))))
+
+(deftest await-in-nested-let-test
+  (async done
+    (try
+      (let [f (^:async fn []
+               (let [x 1
+                     y (let [x 2]
+                         (+ x (let [x (await (js/Promise.resolve 1))] x)))]
+                 (await (+ x y))))]
+        (is (= 7 (await (f)))))
+      (catch :default _ (is false))
+      (finally done))))
