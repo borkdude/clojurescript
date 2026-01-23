@@ -71,6 +71,7 @@
 (def ^:dynamic *passes* nil)
 (def ^:dynamic *file-defs* nil)
 (def ^:dynamic *private-var-access-nowarn* false)
+(def ^:dynamic *await-called* (atom false))
 
 (def constants-ns-sym
   "The namespace of the constants table as a symbol."
@@ -2235,7 +2236,8 @@ x                          (not (contains? ret :info)))
      [(assoc locals name param) (conj params param)])))
 
 (defn analyze-fn-method-body [env form recur-frames]
-  (binding [*recur-frames* recur-frames]
+  (binding [*recur-frames* recur-frames
+            *await-called* (atom false)]
     (analyze env form)))
 
 (defn- analyze-fn-method [env locals form type analyze-body?]
@@ -2549,19 +2551,21 @@ x                          (not (contains? ret :info)))
   [encl-env [_ bindings & exprs :as form] is-loop widened-tags]
   (when-not (and (vector? bindings) (even? (count bindings)))
     (throw (error encl-env "bindings must be vector of even number of elements")))
-  (let [context      (:context encl-env)
+  (let [await-called (atom false)
+        context      (:context encl-env)
         op           (if (true? is-loop) :loop :let)
         bindings     (if widened-tags
                        (vec (mapcat
-                              (fn [[name init] widened-tag]
-                                [(vary-meta name assoc :tag widened-tag) init])
-                              (partition 2 bindings)
-                              widened-tags))
+                             (fn [[name init] widened-tag]
+                               [(vary-meta name assoc :tag widened-tag) init])
+                             (partition 2 bindings)
+                             widened-tags))
                        bindings)
-        [bes env]    (-> encl-env
-                         (cond->
-                           (true? is-loop) (assoc :in-loop true))
-                         (analyze-let-bindings bindings op))
+        [bes env]    (binding [*await-called* await-called]
+                       (-> encl-env
+                           (cond->
+                               (true? is-loop) (assoc :in-loop true))
+                           (analyze-let-bindings bindings op)))
         recur-frame  (when (true? is-loop)
                        {:params bes
                         :flag (atom nil)
@@ -2576,10 +2580,11 @@ x                          (not (contains? ret :info)))
         warn-acc     (when (and is-loop
                                 (not widened-tags))
                        (atom []))
-        expr         (if warn-acc
-                       (with-warning-handlers [(accumulating-warning-handler warn-acc)]
-                         (analyze-let-body env context exprs recur-frames loop-lets))
-                       (analyze-let-body env context exprs recur-frames loop-lets))
+        expr         (binding [*await-called* await-called]
+                       (if warn-acc
+                         (with-warning-handlers [(accumulating-warning-handler warn-acc)]
+                           (analyze-let-body env context exprs recur-frames loop-lets))
+                         (analyze-let-body env context exprs recur-frames loop-lets)))
         children     [:bindings :body]
         nil->any     (fnil identity 'any)]
     (if (and is-loop
@@ -2590,12 +2595,13 @@ x                          (not (contains? ret :info)))
       (do
         (when warn-acc
           (replay-accumulated-warnings warn-acc))
-        {:op       op
-         :env      encl-env
-         :bindings bes
-         :body     (assoc expr :body? true)
-         :form     form
-         :children children}))))
+        (let [encl-env (if @await-called encl-env (dissoc encl-env :async))]
+          {:op       op
+           :env      encl-env
+           :bindings bes
+           :body     (assoc expr :body? true)
+           :form     form
+           :children children})))))
 
 (defmethod parse 'let*
   [op encl-env form _ _]
@@ -4208,22 +4214,31 @@ x                          (not (contains? ret :info)))
         (some? nstr)
         (let [ns (get-expander-ns env nstr)]
           (when (some? ns)
-            (.findInternedVar ^clojure.lang.Namespace ns (symbol (name sym)))))
-
+            (let [qualified-symbol (symbol (name sym))]
+              (when (= 'cljs.core/await qualified-symbol)
+                (reset! *await-called* true))
+              (.findInternedVar ^clojure.lang.Namespace ns qualified-symbol))))
         (some? (gets env :ns :rename-macros sym))
         (let [qualified-symbol (gets env :ns :rename-macros sym)
               nsym (symbol (namespace qualified-symbol))
               sym  (symbol (name qualified-symbol))]
+          (when (= 'cljs.core/await qualified-symbol)
+            (reset! *await-called* true))
           (.findInternedVar ^clojure.lang.Namespace
             #?(:clj (find-ns nsym) :cljs (find-macros-ns nsym)) sym))
 
         :else
         (let [nsym (gets env :ns :use-macros sym)]
           (if (and (some? nsym) (symbol? nsym))
-            (.findInternedVar ^clojure.lang.Namespace
-              #?(:clj (find-ns nsym) :cljs (find-macros-ns nsym)) sym)
+            (let [qualified-symbol (symbol (str nsym) (str sym))]
+              (when (= 'cljs.core/await qualified-symbol)
+                (reset! *await-called* true))
+              (.findInternedVar ^clojure.lang.Namespace
+                #?(:clj (find-ns nsym) :cljs (find-macros-ns nsym)) sym))
             ;; can't be done as compiler pass because macros get to run first
             (when-not (and (lite-mode?) (= 'vector sym))
+              (when (= 'await sym)
+                (reset! *await-called* true))
               (.findInternedVar ^clojure.lang.Namespace
                 #?(:clj (find-ns 'cljs.core) :cljs (find-macros-ns impl/CLJS_CORE_MACROS_SYM)) sym))))))))
 
