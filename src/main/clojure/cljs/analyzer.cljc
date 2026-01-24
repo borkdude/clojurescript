@@ -1904,13 +1904,13 @@ x                          (not (contains? ret :info)))
     (< 2 (count form))
     (throw
       (error env "Too many arguments to throw, throw expects a single Error instance")))
-  (let [outer-await-called *await-called*
+  (let [upper-await-called *await-called*
         await-called (atom false)
         throw-expr (binding [*await-called* await-called]
                      (disallowing-recur (analyze (assoc env :context :expr) throw-form)))
         await-called? @await-called
         env (if-not await-called? (dissoc env :async) env)]
-    (when await-called? (reset! outer-await-called true))
+    (when await-called? (reset! upper-await-called true))
     {:env env :op :throw :form form
      :exception throw-expr
      :children [:exception]}))
@@ -2583,7 +2583,7 @@ x                          (not (contains? ret :info)))
   [encl-env [_ bindings & exprs :as form] is-loop widened-tags]
   (when-not (and (vector? bindings) (even? (count bindings)))
     (throw (error encl-env "bindings must be vector of even number of elements")))
-  (let [prev-await-called *await-called*
+  (let [upper-await-called *await-called*
         await-called (atom false)
         context      (:context encl-env)
         op           (if (true? is-loop) :loop :let)
@@ -2622,7 +2622,7 @@ x                          (not (contains? ret :info)))
         nil->any     (fnil identity 'any)
         await-called? @await-called]
     ;; propogate await-called to surrounding expression
-    (when await-called? (reset! prev-await-called true))
+    (when await-called? (reset! upper-await-called true))
     (if (and is-loop
              (not widened-tags)
              (not= (mapv nil->any @(:tags recur-frame))
