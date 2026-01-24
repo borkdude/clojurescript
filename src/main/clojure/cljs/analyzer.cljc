@@ -73,6 +73,9 @@
 (def ^:dynamic *private-var-access-nowarn* false)
 (def ^:dynamic *await-called* (atom false))
 
+(defn await-called! [atm]
+  (reset! atm true))
+
 (def constants-ns-sym
   "The namespace of the constants table as a symbol."
   'cljs.core.constants)
@@ -1890,7 +1893,7 @@ x                          (not (contains? ret :info)))
                 "case* tests must be numbers, strings, or constants")
         (let [await-called? @await-called
               env (if-not await-called? (dissoc env :async) env)]
-          (when await-called? (reset! upper-await-called true))
+          (when await-called? (await-called! upper-await-called))
           {:env env :op :case :form form
            :test v :nodes nodes :default default
            :children [:test :nodes :default]})))))
@@ -1910,7 +1913,7 @@ x                          (not (contains? ret :info)))
                      (disallowing-recur (analyze (assoc env :context :expr) throw-form)))
         await-called? @await-called
         env (if-not await-called? (dissoc env :async) env)]
-    (when await-called? (reset! upper-await-called true))
+    (when await-called? (await-called! upper-await-called))
     {:env env :op :throw :form form
      :exception throw-expr
      :children [:exception]}))
@@ -1979,7 +1982,7 @@ x                          (not (contains? ret :info)))
             try (disallowing-recur (analyze (if (or e finally) catchenv env) `(do ~@body)))
             await-called? @await-called
             env (if-not await-called? (dissoc env :async) env)]
-        (when await-called? (reset! upper-await-called true))
+        (when await-called? (await-called! upper-await-called))
         {:env env :op :try :form form
          :body (assoc try :body? true)
          :finally finally
@@ -2468,7 +2471,7 @@ x                          (not (contains? ret :info)))
                      (assoc :body? true))
             await-called? @await-called
             env (if-not await-called? (dissoc env :async) env)]
-        (when await-called? (reset! upper-await-called true))
+        (when await-called? (await-called! upper-await-called))
         {:env env :op :letfn :bindings bes :body expr :form form
          :children [:bindings :body]}))))
 
@@ -2489,7 +2492,7 @@ x                          (not (contains? ret :info)))
                 children [:statements :ret]
                 await-called? @await-called
                 env (if-not await-called? (dissoc env :async) env)]
-            (when await-called? (reset! upper-await-called true))
+            (when await-called? (await-called! upper-await-called))
             {:op :do
              :env env
              :form form
@@ -2502,7 +2505,7 @@ x                          (not (contains? ret :info)))
                 children [:statements :ret]
                 await-called? @await-called
                 env (if-not await-called? (dissoc env :async) env)]
-            (when await-called? (reset! upper-await-called true))
+            (when await-called? (await-called! upper-await-called))
             {:op :do
              :env env
              :form form
@@ -2622,7 +2625,7 @@ x                          (not (contains? ret :info)))
         nil->any     (fnil identity 'any)
         await-called? @await-called]
     ;; propogate await-called to surrounding expression
-    (when await-called? (reset! upper-await-called true))
+    (when await-called? (await-called! upper-await-called))
     (if (and is-loop
              (not widened-tags)
              (not= (mapv nil->any @(:tags recur-frame))
@@ -4242,6 +4245,9 @@ x                          (not (contains? ret :info)))
        #?(:clj  (find-ns (symbol nstr))
           :cljs (find-macros-ns (symbol nstr)))))))
 
+(defn await-macro? [qsym]
+  (= 'cljs.core/await qsym))
+
 (defn get-expander* [sym env]
   (when-not (or (some? (gets env :locals sym)) ; locals hide macros
                 (and (excluded? env sym) (not (used? env sym))))
@@ -4250,16 +4256,16 @@ x                          (not (contains? ret :info)))
         (some? nstr)
         (let [ns (get-expander-ns env nstr)]
           (when (some? ns)
-            (let [qualified-symbol (symbol (name sym))]
-              (when (= 'cljs.core/await qualified-symbol)
-                (reset! *await-called* true))
-              (.findInternedVar ^clojure.lang.Namespace ns qualified-symbol))))
+            (let [qualified-symbol (symbol (str (ns-name ns)) (name sym))]
+              (when (await-macro? qualified-symbol)
+                (await-called! *await-called*))
+              (.findInternedVar ^clojure.lang.Namespace ns (symbol (name sym))))))
         (some? (gets env :ns :rename-macros sym))
         (let [qualified-symbol (gets env :ns :rename-macros sym)
               nsym (symbol (namespace qualified-symbol))
               sym  (symbol (name qualified-symbol))]
-          (when (= 'cljs.core/await qualified-symbol)
-            (reset! *await-called* true))
+          (when (await-macro? qualified-symbol)
+            (await-called! *await-called*))
           (.findInternedVar ^clojure.lang.Namespace
             #?(:clj (find-ns nsym) :cljs (find-macros-ns nsym)) sym))
 
@@ -4267,14 +4273,14 @@ x                          (not (contains? ret :info)))
         (let [nsym (gets env :ns :use-macros sym)]
           (if (and (some? nsym) (symbol? nsym))
             (let [qualified-symbol (symbol (str nsym) (str sym))]
-              (when (= 'cljs.core/await qualified-symbol)
-                (reset! *await-called* true))
+              (when (await-macro? qualified-symbol)
+                (await-called! *await-called*))
               (.findInternedVar ^clojure.lang.Namespace
                 #?(:clj (find-ns nsym) :cljs (find-macros-ns nsym)) sym))
             ;; can't be done as compiler pass because macros get to run first
             (when-not (and (lite-mode?) (= 'vector sym))
               (when (= 'await sym)
-                (reset! *await-called* true))
+                (await-called! *await-called*))
               (.findInternedVar ^clojure.lang.Namespace
                 #?(:clj (find-ns 'cljs.core) :cljs (find-macros-ns impl/CLJS_CORE_MACROS_SYM)) sym))))))))
 

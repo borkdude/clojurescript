@@ -1,5 +1,7 @@
 (ns cljs.async-await-test
-  (:require [clojure.test :refer [deftest is async]]))
+  (:require [clojure.test :refer [deftest is async]]
+            [cljs.core :as cc :refer [await] :rename {await aw}])
+  (:require-macros [cljs.macro-test.macros :refer [await!] :as macros]))
 
 (defn ^:async foo [n]
   (let [x (await (js/Promise.resolve 10))
@@ -208,3 +210,21 @@
         (is (= 13 (await (f)))))
       (catch :default _ (is false))
       (finally (done)))))
+
+(deftest await-with-aliases-or-renamed-and-via-macros-test
+  (async done
+    (try
+      (let [a (await! (js/Promise.resolve 1))
+            b (macros/await! (js/Promise.resolve 1))
+            c (cc/await (js/Promise.resolve 1))
+            d (aw (js/Promise.resolve 1))
+            e (cljs.core/await (js/Promise.resolve 1))
+            f (clojure.core/await (js/Promise.resolve 1))]
+        (is (= 1 a))
+        (is (= 1 b))
+        (is (= 1 c))
+        (is (= 1 d))
+        (is (= 1 e))
+        (is (= 1 f))
+        (done))
+      (catch :default _ (is false)))))
