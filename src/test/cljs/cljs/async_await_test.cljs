@@ -16,7 +16,7 @@
         (is (= 61 v)))
       (let [v (await (apply foo [10]))]
         (is (= 61 v)))
-      (catch :default e (prn :should-not-reach-here e))
+      (catch :default _ (is false))
       (finally (done)))))
 
 (defn ^:async variadic-foo [n & ns]
@@ -36,7 +36,7 @@
         (is (= 47 v)))
       (let [v (await (apply variadic-foo [10 1 2 3]))]
         (is (= 47 v)))
-      (catch :default e (prn :should-not-reach-here e))
+      (catch :default _ (is false))
       (finally (done)))))
 
 (defn ^:async multi-arity-foo
@@ -54,7 +54,7 @@
         (is (= 10 v)))
       (let [v (await (apply multi-arity-foo [10 20]))]
         (is (= 30 v)))
-      (catch :default e (prn :should-not-reach-here e))
+      (catch :default _ (is false))
       (finally (done)))))
 
 (defn ^:async multi-arity-variadic-foo
@@ -72,7 +72,7 @@
         (is (= 10 v)))
       (let [v (await (apply multi-arity-variadic-foo [10 20]))]
         (is (= 30 v)))
-      (catch :default e (prn :should-not-reach-here e))
+      (catch :default _ (is false))
       (finally (done)))))
 
 (deftest fn-test
@@ -82,7 +82,7 @@
             v (await (f 10))
             v2 (await (apply f [10]))]
         (is (= 30 v v2)))
-      (catch :default e (prn :should-not-reach-here e))
+      (catch :default _ (is false))
       (finally (done)))))
 
 (deftest varargs-fn-test
@@ -94,7 +94,7 @@
             v3 (await (f 5 5))
             v4 (await (apply f [5 5]))]
         (is (= 30 v v2 v3 v4)))
-      (catch :default e (prn :should-not-reach-here e))
+      (catch :default _ (is false))
       (finally (done)))))
 
 (deftest variadic-fn-test
@@ -107,7 +107,7 @@
                    (await (apply f [1]))
                    (await (f 1 2))
                    (await (apply f [1 2]))])))
-         (catch :default e (prn :should-not-reach-here e))
+         (catch :default _ (is false))
          (finally (done)))))
 
 (deftest variadic-varargs-fn-test
@@ -120,7 +120,7 @@
                    (await (apply f [1]))
                    (await (f 1 2 3))
                    (await (apply f [1 2 3]))])))
-         (catch :default e (prn :should-not-reach-here e))
+         (catch :default _ (is false))
          (finally (done)))))
 
 (deftest await-in-throw-test
@@ -132,7 +132,17 @@
         (let [x (try (await (f 1))
                      (catch :default e e))]
           (is (= "dude" x)))
-        (catch :default e (prn :should-not-reach-here e))
+        (catch :default _ (is false))
+        (finally (done))))))
+
+(deftest throw-in-await-test
+  (async done
+    (let [f (^:async fn [x] (throw "dude") x)]
+      (try
+        (let [_ (await (f 2))]
+          (is false))
+        (catch :default e
+          (is (= "dude" e)))
         (finally (done))))))
 
 (deftest await-in-do-test
@@ -144,7 +154,7 @@
                                @a))
             v (await (f))]
         (is (= 3 v)))
-      (catch :default e (prn :should-not-reach-here e))
+      (catch :default _ (is false))
       (finally (done)))))
 
 (deftest await-let-fn-test
@@ -157,7 +167,7 @@
                                (identity v)))
             v (await (f))]
         (is (= 12 v)))
-      (catch :default e (prn :should-not-reach-here e))
+      (catch :default _ (is false))
       (finally (done)))))
 
 (deftest await-in-loop-test
@@ -175,7 +185,7 @@
                                (identity x)))
             v (await (f))]
         (is (= [1 2 3] v)))
-      (catch :default e (prn :should-not-reach-here e))
+      (catch :default _ (is false))
       (finally (done)))))
 
 (deftest await-in-nested-let-test
