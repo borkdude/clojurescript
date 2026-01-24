@@ -200,8 +200,11 @@
                             (identity (do (swap! a inc) (swap! a (await (js/Promise.resolve inc)))))
                             @a)
                      b6 (try (identity (try 1 (finally (await nil))))
-                             (finally nil))]
-                 (await (+ b1 b2 b3 b4 b5 b6))))]
-        (is (= 12 (await (f)))))
+                             (finally nil))
+                     b7 (letfn [(f [x] x)]
+                          (f (letfn [(f [x] x)]
+                               (f (await 1)))))]
+                 (await (+ b1 b2 b3 b4 b5 b6 b7))))]
+        (is (= 13 (await (f)))))
       (catch :default _ (is false))
       (finally (done)))))
