@@ -1854,40 +1854,46 @@ x                          (not (contains? ret :info)))
   [op env [_ sym tests thens default :as form] name _]
   (assert (symbol? sym) "case* must switch on symbol")
   (assert (every? vector? tests) "case* tests must be grouped in vectors")
-  (let [expr-env (assoc env :context :expr)
-        v        (disallowing-recur (analyze expr-env sym))
-        tests    (mapv #(mapv (fn [t] (analyze expr-env t)) %) tests)
-        thens    (mapv #(analyze env %) thens)
-        nodes    (mapv (fn [tests then]
-                         {:op :case-node
-                          ;synthetic node, no :form
-                          :env env
-                          :tests (mapv (fn [test]
-                                         {:op :case-test
-                                          :form (:form test)
-                                          :env expr-env
-                                          :test test
-                                          :children [:test]})
-                                       tests)
-                          :then {:op :case-then
-                                 :form (:form then)
-                                 :env env
-                                 :then then
-                                 :children [:then]}
-                          :children [:tests :then]})
-                       tests
-                       thens)
-        default  (analyze env default)]
-    (assert (every? (fn [t]
-                      (or
-                        (-> t :info :const)
-                        (and (= :const (:op t))
-                             ((some-fn number? string? char?) (:form t)))))
-              (apply concat tests))
-      "case* tests must be numbers, strings, or constants")
-    {:env env :op :case :form form
-     :test v :nodes nodes :default default
-     :children [:test :nodes :default]}))
+  (let [upper-await-called *await-called*
+        await-called (atom false)]
+    (binding [*await-called* await-called]
+      (let [expr-env (assoc env :context :expr)
+            v        (disallowing-recur (analyze expr-env sym))
+            tests    (mapv #(mapv (fn [t] (analyze expr-env t)) %) tests)
+            thens    (mapv #(analyze env %) thens)
+            nodes    (mapv (fn [tests then]
+                             {:op :case-node
+                                        ;synthetic node, no :form
+                              :env env
+                              :tests (mapv (fn [test]
+                                             {:op :case-test
+                                              :form (:form test)
+                                              :env expr-env
+                                              :test test
+                                              :children [:test]})
+                                           tests)
+                              :then {:op :case-then
+                                     :form (:form then)
+                                     :env env
+                                     :then then
+                                     :children [:then]}
+                              :children [:tests :then]})
+                           tests
+                           thens)
+            default  (analyze env default)]
+        (assert (every? (fn [t]
+                          (or
+                           (-> t :info :const)
+                           (and (= :const (:op t))
+                                ((some-fn number? string? char?) (:form t)))))
+                        (apply concat tests))
+                "case* tests must be numbers, strings, or constants")
+        (let [await-called? @await-called
+              env (if-not await-called? (dissoc env :async) env)]
+          (when await-called? (reset! upper-await-called true))
+          {:env env :op :case :form form
+           :test v :nodes nodes :default default
+           :children [:test :nodes :default]})))))
 
 (defmethod parse 'throw
   [op env [_ throw-form :as form] name _]
@@ -1898,7 +1904,13 @@ x                          (not (contains? ret :info)))
     (< 2 (count form))
     (throw
       (error env "Too many arguments to throw, throw expects a single Error instance")))
-  (let [throw-expr (disallowing-recur (analyze (assoc env :context :expr) throw-form))]
+  (let [outer-await-called *await-called*
+        await-called (atom false)
+        throw-expr (binding [*await-called* await-called]
+                     (disallowing-recur (analyze (assoc env :context :expr) throw-form)))
+        await-called? @await-called
+        env (if-not await-called? (dissoc env :async) env)]
+    (when await-called? (reset! outer-await-called true))
     {:env env :op :throw :form form
      :exception throw-expr
      :children [:exception]}))
@@ -2457,26 +2469,35 @@ x                          (not (contains? ret :info)))
 
 (defmethod parse 'do
   [op env [_ & exprs :as form] _ _]
-  (let [statements (analyze-do-statements env exprs)]
-    (if (<= (count exprs) 1)
-      (let [ret      (analyze env (first exprs))
-            children [:statements :ret]]
-        {:op :do
-         :env env
-         :form form
-         :statements statements :ret ret
-         :children children})
-      (let [ret-env  (if (= :statement (:context env))
-                       (assoc env :context :statement)
-                       (assoc env :context :return))
-            ret      (analyze ret-env (last exprs))
-            children [:statements :ret]]
-        {:op :do
-         :env env
-         :form form
-         :statements statements
-         :ret ret
-         :children children}))))
+  (let [upper-await-called *await-called*
+        await-called (atom false)]
+    (binding [*await-called* await-called]
+      (let [statements (analyze-do-statements env exprs)]
+        (if (<= (count exprs) 1)
+          (let [ret      (analyze env (first exprs))
+                children [:statements :ret]
+                await-called? @await-called
+                env (if-not await-called? (dissoc env :async) env)]
+            (when await-called? (reset! upper-await-called true))
+            {:op :do
+             :env env
+             :form form
+             :statements statements :ret ret
+             :children children})
+          (let [ret-env  (if (= :statement (:context env))
+                           (assoc env :context :statement)
+                           (assoc env :context :return))
+                ret      (analyze ret-env (last exprs))
+                children [:statements :ret]
+                await-called? @await-called
+                env (if-not await-called? (dissoc env :async) env)]
+            (when await-called? (reset! upper-await-called true))
+            {:op :do
+             :env env
+             :form form
+             :statements statements
+             :ret ret
+             :children children}))))))
 
 (defn analyze-let-binding-init [env init loop-lets]
   (binding [*loop-lets* loop-lets]

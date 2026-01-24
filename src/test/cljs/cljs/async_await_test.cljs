@@ -178,26 +178,28 @@
       (catch :default _ (is false))
       (finally (done)))))
 
-(deftest await-in-nested-let-test
+(deftest await-in-nested
   (async done
     (try
       (let [f (^:async fn []
-               (let [x 1
-                     y (let [x 2]
-                         (+ x (let [x (await (js/Promise.resolve 1))] x)))]
-                 (await (+ x y))))]
-        (is (= 4 (await (f)))))
+               (let [b1 1
+                     b2 (let [x 2] ;; outer let doesn't have awaits
+                         (+ x
+                            ;; but inner let does, so outer let should become async
+                            (let [x (await (js/Promise.resolve 1))] x)))
+                     b3 (case :foo :foo (case :foo :foo (await (js/Promise.resolve 1))))
+                     b4 (int ;; wrapped in int to avoid false positive warning:
+                             ;; all arguments must be numbers, got [number
+                             ;; ignore] instead
+                         (try (throw (throw (await (js/Promise.resolve 1)))) (catch :default _ 1 )))
+                     a (atom 0)
+                     b5 (do (swap! a inc) (swap! a inc)
+                            ;; do with single expr, wrapped in first to avoid merging with upper do
+                            (first [(do (swap! a (await (js/Promise.resolve inc))))])
+                            ;; do with multiple exprs, wrapped in first to avoid merging with upper do
+                            (first [(do (swap! a inc) (swap! a (await (js/Promise.resolve inc))))])
+                            @a)]
+                 (await (+ b1 b2 b3 b4 b5))))]
+        (is (= 11 (await (f)))))
       (catch :default _ (is false))
       (finally (done)))))
-
-(deftest await-in-nested-let-test
-  (async done
-    (try
-      (let [f (^:async fn []
-               (let [x 1
-                     y (let [x 2]
-                         (+ x (let [x (await (js/Promise.resolve 1))] x)))]
-                 (await (+ x y))))]
-        (is (= 7 (await (f)))))
-      (catch :default _ (is false))
-      (finally done))))
