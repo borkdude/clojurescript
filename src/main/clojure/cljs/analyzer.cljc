@@ -1917,75 +1917,80 @@ x                          (not (contains? ret :info)))
 
 (defmethod parse 'try
   [op env [_ & body :as form] name _]
-  (let [catchenv (update-in env [:context] #(if (= :expr %) :return %))
-        catch? (every-pred seq? #(= (first %) 'catch))
-        default? (every-pred catch? #(= (second %) :default))
-        finally? (every-pred seq? #(= (first %) 'finally))
+  (let [upper-await-called *await-called*
+        await-called (atom false)]
+    (binding [*await-called* await-called]
+      (let [catchenv (update-in env [:context] #(if (= :expr %) :return %))
+            catch? (every-pred seq? #(= (first %) 'catch))
+            default? (every-pred catch? #(= (second %) :default))
+            finally? (every-pred seq? #(= (first %) 'finally))
 
-        {:keys [body cblocks dblock fblock]}
-        (loop [parser {:state :start :forms body
-                       :body [] :cblocks [] :dblock nil :fblock nil}]
-          (if (seq? (:forms parser))
-            (let [[form & forms*] (:forms parser)
-                  parser* (assoc parser :forms forms*)]
-              (case (:state parser)
-                :start (cond
-                         (catch? form) (recur (assoc parser :state :catches))
-                         (finally? form) (recur (assoc parser :state :finally))
-                         :else (recur (update-in parser* [:body] conj form)))
-                :catches (cond
-                           (default? form) (recur (assoc parser* :dblock form :state :finally))
-                           (catch? form) (recur (update-in parser* [:cblocks] conj form))
-                           (finally? form) (recur (assoc parser :state :finally))
-                           :else (throw (error env "Invalid try form")))
-                :finally (recur (assoc parser* :fblock form :state :done))
-                :done (throw (error env "Unexpected form after finally"))))
-            parser))
+            {:keys [body cblocks dblock fblock]}
+            (loop [parser {:state :start :forms body
+                           :body [] :cblocks [] :dblock nil :fblock nil}]
+              (if (seq? (:forms parser))
+                (let [[form & forms*] (:forms parser)
+                      parser* (assoc parser :forms forms*)]
+                  (case (:state parser)
+                    :start (cond
+                             (catch? form) (recur (assoc parser :state :catches))
+                             (finally? form) (recur (assoc parser :state :finally))
+                             :else (recur (update-in parser* [:body] conj form)))
+                    :catches (cond
+                               (default? form) (recur (assoc parser* :dblock form :state :finally))
+                               (catch? form) (recur (update-in parser* [:cblocks] conj form))
+                               (finally? form) (recur (assoc parser :state :finally))
+                               :else (throw (error env "Invalid try form")))
+                    :finally (recur (assoc parser* :fblock form :state :done))
+                    :done (throw (error env "Unexpected form after finally"))))
+                parser))
 
-        finally (when (seq fblock)
-                  (-> (disallowing-recur (analyze (assoc env :context :statement) `(do ~@(rest fblock))))
-                      (assoc :body? true)))
-        e (when (or (seq cblocks) dblock) (gensym "e"))
-        default (if-let [[_ _ name & cb] dblock]
-                  `(cljs.core/let [~name ~e] ~@cb)
-                  `(throw ~e))
-        cblock (if (seq cblocks)
-                 `(cljs.core/cond
-                   ~@(mapcat
-                      (fn [[_ type name & cb]]
-                        (when name (assert (not (namespace name)) "Can't qualify symbol in catch"))
-                        `[(cljs.core/instance? ~type ~e)
-                          (cljs.core/let [~name ~e] ~@cb)])
-                      cblocks)
-                   :else ~default)
-                 default)
-        locals (:locals catchenv)
-        locals (if e
-                 (assoc locals e
-                        {:name e
-                         :line (get-line e env)
-                         :column (get-col e env)
-                         ;; :local is required for {:op :local ...} nodes
-                         ;; but previously we had no way to figure this out
-                         ;; for `catch` locals, by adding it here we can recover
-                         ;; it later
-                         :local :catch})
-                 locals)
-        catch (when cblock
-                (disallowing-recur (analyze (assoc catchenv :locals locals) cblock)))
-        try (disallowing-recur (analyze (if (or e finally) catchenv env) `(do ~@body)))]
-
-    {:env env :op :try :form form
-     :body (assoc try :body? true)
-     :finally finally
-     :name e
-     :catch catch
-     :children (vec
-                 (concat [:body]
-                         (when catch
-                           [:catch])
-                         (when finally
-                           [:finally])))}))
+            finally (when (seq fblock)
+                      (-> (disallowing-recur (analyze (assoc env :context :statement) `(do ~@(rest fblock))))
+                          (assoc :body? true)))
+            e (when (or (seq cblocks) dblock) (gensym "e"))
+            default (if-let [[_ _ name & cb] dblock]
+                      `(cljs.core/let [~name ~e] ~@cb)
+                      `(throw ~e))
+            cblock (if (seq cblocks)
+                     `(cljs.core/cond
+                        ~@(mapcat
+                           (fn [[_ type name & cb]]
+                             (when name (assert (not (namespace name)) "Can't qualify symbol in catch"))
+                             `[(cljs.core/instance? ~type ~e)
+                               (cljs.core/let [~name ~e] ~@cb)])
+                           cblocks)
+                        :else ~default)
+                     default)
+            locals (:locals catchenv)
+            locals (if e
+                     (assoc locals e
+                            {:name e
+                             :line (get-line e env)
+                             :column (get-col e env)
+                             ;; :local is required for {:op :local ...} nodes
+                             ;; but previously we had no way to figure this out
+                             ;; for `catch` locals, by adding it here we can recover
+                             ;; it later
+                             :local :catch})
+                     locals)
+            catch (when cblock
+                    (disallowing-recur (analyze (assoc catchenv :locals locals) cblock)))
+            try (disallowing-recur (analyze (if (or e finally) catchenv env) `(do ~@body)))
+            await-called? @await-called
+            env (if-not await-called? (dissoc env :async) env)]
+        (when await-called? (reset! upper-await-called true))
+        {:env env :op :try :form form
+         :body (assoc try :body? true)
+         :finally finally
+         :name e
+         :catch catch
+         :children (vec
+                    (concat [:body]
+                            (when catch
+                              [:catch])
+                            (when finally
+                              [:finally])))}))))
 
 (defn valid-proto [x]
   (when (symbol? x) x))

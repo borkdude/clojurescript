@@ -194,12 +194,14 @@
                          (try (throw (throw (await (js/Promise.resolve 1)))) (catch :default _ 1 )))
                      a (atom 0)
                      b5 (do (swap! a inc) (swap! a inc)
-                            ;; do with single expr, wrapped in first to avoid merging with upper do
-                            (first [(do (swap! a (await (js/Promise.resolve inc))))])
-                            ;; do with multiple exprs, wrapped in first to avoid merging with upper do
-                            (first [(do (swap! a inc) (swap! a (await (js/Promise.resolve inc))))])
-                            @a)]
-                 (await (+ b1 b2 b3 b4 b5))))]
-        (is (= 11 (await (f)))))
+                            ;; do with single expr, wrapped in identity to avoid merging with upper do
+                            (identity (do (swap! a (await (js/Promise.resolve inc)))))
+                            ;; do with multiple exprs, wrapped identity to avoid merging with upper do
+                            (identity (do (swap! a inc) (swap! a (await (js/Promise.resolve inc)))))
+                            @a)
+                     b6 (try (identity (try 1 (finally (await nil))))
+                             (finally nil))]
+                 (await (+ b1 b2 b3 b4 b5 b6))))]
+        (is (= 12 (await (f)))))
       (catch :default _ (is false))
       (finally (done)))))
