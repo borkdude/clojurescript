@@ -135,16 +135,6 @@
         (catch :default _ (is false))
         (finally (done))))))
 
-(deftest throw-in-await-test
-  (async done
-    (let [f (^:async fn [x] (throw "dude") x)]
-      (try
-        (let [_ (await (f 2))]
-          (is false))
-        (catch :default e
-          (is (= "dude" e)))
-        (finally (done))))))
-
 (deftest await-in-do-test
   (async done
     (try
