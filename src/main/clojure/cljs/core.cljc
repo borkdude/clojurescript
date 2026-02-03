@@ -895,27 +895,22 @@
   (core/let [interpolate (core/fn [x]
                            (core/let [ast (cljs.analyzer/no-warn (cljs.analyzer/analyze &env x))
                                       op (:op ast)
-                                      _ (debug :x x)
-                                      _ (debug :op op)
                                       tag (cljs.analyzer/infer-tag &env ast)
-                                      _ (debug :tag tag)
                                       cljs? (core/when (= :var op)
                                               (core/= 'cljs.core (:ns (:info ast))))
                                       optimization-safe? (core/or (= :local op)
                                                                   (= :const op)
-                                                                  cljs?)
-                                      _ (debug :safe optimization-safe?)]
+                                                                  cljs?)]
                              (core/cond
-                               (core/and (contains? '#{string clj-nil} tag)
+                               (core/and (core/= 'clj-nil tag)
                                          optimization-safe?)
                                nil
-                               (core/and (contains? '#{boolean number
-                                                       cljs.core/Keyword
-                                                       cljs.core/Symbol} tag)
+                               (core/and (compatible? tag '#{boolean number
+                                                             cljs.core/Keyword
+                                                             cljs.core/Symbol})
                                          optimization-safe?)
                                ["+~{}" x]
                                :else
-                               ;; Note: can't assume non-nil despite tag here, so we go through str 1-arity
                                ["+cljs.core.str.cljs$core$IFn$_invoke$arity$1(~{})" x])))
              strs+args (keep interpolate xs)
              strs (string/join (map first strs+args))
