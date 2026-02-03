@@ -846,6 +846,18 @@
                  (cljs.analyzer/no-warn (cljs.analyzer/analyze env form)))
     allowed-tags))
 
+#_(core/defn- safe-for-clj-nil-optimization?
+  "Returns true if expression is safe to optimize away when typed as clj-nil.
+    Only locals, literal nil, and core vars are safe - user-defined vars
+    can be mutated via set! so their inferred type may be stale."
+  [env form]
+  (core/let [ast ]
+    (core/case (:op ast)
+      :local true                                    ;; locals can't be set!
+      :const (core/nil? (:val ast))                  ;; literal nil
+      :var (= 'cljs.core (:ns (:info ast)))          ;; core vars only
+      false)))
+
 (core/defn- string-expr [e]
   (vary-meta e assoc :tag 'string))
 
@@ -873,18 +885,36 @@
    (core/boolean? x)
    (core/number? x)))
 
+(core/defn debug [x y]
+  (core/binding [*out* *err*]
+    (prn x y)))
+
 ;; TODO: should probably be a compiler pass to avoid the code duplication
 (core/defmacro str
   [& xs]
   (core/let [interpolate (core/fn [x]
-                           (core/cond
-                             (typed-expr? &env x '#{clj-nil})
-                             nil
-                             (compile-time-constant? x)
-                             ["+~{}" x]
-                             :else
-                             ;; Note: can't assume non-nil despite tag here, so we go through str 1-arity
-                             ["+cljs.core.str.cljs$core$IFn$_invoke$arity$1(~{})" x]))
+                           (core/let [ast (cljs.analyzer/no-warn (cljs.analyzer/analyze &env x))
+                                      op (:op ast)
+                                      _ (debug :x x)
+                                      _ (debug :op op)
+                                      tag (cljs.analyzer/infer-tag &env ast)
+                                      _ (debug :tag tag)
+                                      cljs? (core/when (= :var op)
+                                              (core/= 'cljs.core (:ns (:info ast))))
+                                      optimization-safe? (core/or (= :local op)
+                                                                  (= :const op)
+                                                                  cljs?)
+                                      _ (debug :safe optimization-safe?)]
+                             (core/cond
+                               (core/and (contains? '#{string clj-nil} tag)
+                                         optimization-safe?)
+                               nil
+                               (core/and (contains? '#{keyword boolean number} tag)
+                                         optimization-safe?)
+                               ["+~{}" x]
+                               :else
+                               ;; Note: can't assume non-nil despite tag here, so we go through str 1-arity
+                               ["+cljs.core.str.cljs$core$IFn$_invoke$arity$1(~{})" x])))
              strs+args (keep interpolate xs)
              strs (string/join (map first strs+args))
              args (map second strs+args)]
