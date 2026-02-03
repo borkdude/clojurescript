@@ -909,7 +909,9 @@
                                (core/and (contains? '#{string clj-nil} tag)
                                          optimization-safe?)
                                nil
-                               (core/and (contains? '#{keyword boolean number} tag)
+                               (core/and (contains? '#{boolean number
+                                                       cljs.core/Keyword
+                                                       cljs.core/Symbol} tag)
                                          optimization-safe?)
                                ["+~{}" x]
                                :else
