@@ -44,21 +44,20 @@
     :else form))
 
 (defn- rename-inner-bindings
-  "Rename all binding symbols in a let* bindings vector to gensyms.
-   Returns [new-bindings new-body] with all references substituted."
-  [inner-bindings body]
+  "Rename binding symbols that conflict with existing locals to gensyms.
+   Returns [new-bindings new-body] with conflicting references substituted."
+  [locals inner-bindings body]
   (let [pairs (partition 2 inner-bindings)]
     (loop [pairs pairs
            renames {}
            out-bindings []]
       (if-let [[sym init] (first pairs)]
-        (let [;; Apply accumulated renames to this init
-              init (reduce-kv (fn [form old new] (replace-sym form old new))
+        (let [init (reduce-kv (fn [form old new] (replace-sym form old new))
                      init renames)
-              new-sym (gensym (str (name sym) "__"))
-              renames (assoc renames sym new-sym)]
+              conflicts? (contains? locals sym)
+              new-sym (if conflicts? (gensym (str (name sym) "__")) sym)
+              renames (if conflicts? (assoc renames sym new-sym) renames)]
           (recur (rest pairs) renames (conj out-bindings new-sym init)))
-        ;; All bindings processed — rename body
         (let [new-body (reduce-kv (fn [form old new] (replace-sym form old new))
                          body renames)]
           [out-bindings new-body])))))
@@ -66,24 +65,29 @@
 (defn- lift-args
   "Given a list of transformed args, extract any IIFE-causing forms into
    let* bindings. Returns [bindings new-args].
-   For let*, flattens by hoisting inner bindings (renamed to gensyms to
-   avoid shadowing). For other forms, binds the whole form to a gensym."
-  [args]
+   For let*, flattens by hoisting inner bindings (renaming conflicts with
+   locals to avoid shadowing). For other forms, binds the whole form to a gensym."
+  [locals args]
   (reduce
     (fn [[bindings new-args] arg]
       (if (needs-lifting? arg)
         (if (= 'let* (first arg))
-          ;; Flatten let*: hoist its bindings (renamed), bind body to gensym
+          ;; Flatten let*: hoist its bindings, use body directly if trivial
           (let [[_ inner-bindings & body] arg
                 body-form (if (= 1 (count body))
                             (first body)
                             (cons 'do body))
-                [renamed-bindings renamed-body] (rename-inner-bindings inner-bindings body-form)
-                result-sym (gensym "anf__")]
-            [(-> bindings
-                 (into renamed-bindings)
-                 (conj result-sym renamed-body))
-             (conj new-args result-sym)])
+                [renamed-bindings renamed-body] (rename-inner-bindings locals inner-bindings body-form)]
+            (if (needs-lifting? renamed-body)
+              ;; Body itself needs lifting — bind to gensym
+              (let [result-sym (gensym "anf__")]
+                [(-> bindings
+                     (into renamed-bindings)
+                     (conj result-sym renamed-body))
+                 (conj new-args result-sym)])
+              ;; Body is trivial — use directly as arg
+              [(into bindings renamed-bindings)
+               (conj new-args renamed-body)]))
           ;; Other IIFE-causing forms: bind whole thing to gensym
           (let [result-sym (gensym "anf__")]
             [(conj bindings result-sym arg)
@@ -98,7 +102,7 @@
   [env locals op args]
   (let [transformed (doall (map #(transform env locals %) args))]
     (if (some needs-lifting? transformed)
-      (let [[bindings new-args] (lift-args transformed)]
+      (let [[bindings new-args] (lift-args locals transformed)]
         (list 'let* (vec bindings) (cons op new-args)))
       (cons op transformed))))
 
@@ -118,7 +122,7 @@
                       body-form (if (= 1 (count inner-body))
                                   (first inner-body)
                                   (cons 'do inner-body))
-                      [renamed-bindings renamed-body] (rename-inner-bindings inner-bindings body-form)
+                      [renamed-bindings renamed-body] (rename-inner-bindings current-locals inner-bindings body-form)
                       inner-syms (take-nth 2 renamed-bindings)]
                   [(-> acc (into renamed-bindings) (conj sym renamed-body))
                    (into (conj current-locals sym) inner-syms)])
@@ -196,7 +200,7 @@
     (vector? form)
     (let [transformed (doall (map #(transform env locals %) form))]
       (if (some needs-lifting? transformed)
-        (let [[bindings new-elems] (lift-args transformed)]
+        (let [[bindings new-elems] (lift-args locals transformed)]
           (list 'let* (vec bindings) (vec new-elems)))
         (vec transformed)))
 
