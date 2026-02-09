@@ -31,13 +31,16 @@
        (contains? #{'let* 'loop* 'try 'letfn*} (first form))))
 
 (defn- if-with-iife-branch?
-  "Returns true if form is an if where any branch needs-lifting?."
+  "Returns true if form is an if where any branch needs-lifting? or is
+   itself an if-with-iife-branch? (handles nested if with IIFE branches)."
   [form]
   (and (seq? form)
        (= 'if (first form))
        (let [[_ _test then else] form]
          (or (needs-lifting? then)
-             (needs-lifting? else)))))
+             (needs-lifting? else)
+             (if-with-iife-branch? then)
+             (if-with-iife-branch? else)))))
 
 (declare transform)
 
@@ -75,9 +78,12 @@
   "Wrap the result of form in a js* assignment to sym.
    For let*, places the assignment on the body's last expression
    so the let* stays in statement position (no IIFE).
+   For if, pushes the assignment into each branch to keep them
+   in statement position.
    Renames inner bindings that shadow sym to avoid wrong assignment target."
   [sym form]
-  (if (and (seq? form) (= 'let* (first form)))
+  (cond
+    (and (seq? form) (= 'let* (first form)))
     (let [[_ bindings & body] form
           binding-syms (set (take-nth 2 bindings))
           body-form (if (= 1 (count body)) (first body) (cons 'do body))
@@ -92,6 +98,14 @@
           init-stmts (pop body-vec)]
       (apply list 'let* (vec bindings)
         (conj init-stmts (list 'js* "(~{} = ~{})" sym last-expr))))
+
+    (and (seq? form) (= 'if (first form)))
+    (let [[_ test then else] form]
+      (if else
+        (list 'if test (wrap-in-assign sym then) (wrap-in-assign sym else))
+        (list 'if test (wrap-in-assign sym then))))
+
+    :else
     (list 'js* "(~{} = ~{})" sym form)))
 
 (defn- lift-args
@@ -183,8 +197,9 @@
                               (cons 'do inner-body))
                   [renamed-bindings renamed-body] (rename-inner-bindings current-locals inner-bindings body-form)
                   inner-syms (take-nth 2 renamed-bindings)]
-              (if (if-with-iife-branch? renamed-body)
+              (cond
                 ;; Flattened body is if-with-IIFE-branch → declare-assign, split let*
+                (if-with-iife-branch? renamed-body)
                 (let [new-locals (into (conj current-locals sym) inner-syms)
                       [_ test then else] renamed-body
                       if-stmt (if else
@@ -205,7 +220,30 @@
                          (if (and (seq? inner) (= 'do (first inner)))
                            (rest inner)
                            [inner])))
+
+                ;; Body is do-with-statements → split with declare-assign
+                (and (seq? renamed-body) (= 'do (first renamed-body))
+                     (> (count (rest renamed-body)) 1))
+                (let [do-forms (vec (rest renamed-body))
+                      stmts (pop do-forms)
+                      last-expr (peek do-forms)
+                      new-locals (into (conj current-locals sym) inner-syms)
+                      remaining (vec (mapcat identity (rest pairs)))
+                      inner (if (seq remaining)
+                              (transform-let* env new-locals remaining body)
+                              (let [t-body (doall (map #(transform env new-locals %) body))]
+                                (if (= 1 (count t-body))
+                                  (first t-body)
+                                  (cons 'do t-body))))]
+                  (apply list 'let* (vec (-> acc (into renamed-bindings) (conj sym (list 'js* "void 0"))))
+                         (concat stmts
+                                 [(list 'js* "(~{} = ~{})" sym last-expr)]
+                                 (if (and (seq? inner) (= 'do (first inner)))
+                                   (rest inner)
+                                   [inner]))))
+
                 ;; Normal flatten: recur
+                :else
                 (recur (rest pairs)
                        (-> acc (into renamed-bindings) (conj sym renamed-body))
                        (into (conj current-locals sym) inner-syms))))
@@ -292,13 +330,23 @@
                        t-body (doall (map #(transform env new-locals %) body))]
                    (apply list 'loop* (vec new-bindings) t-body))
           do (cons 'do (doall (map #(transform env locals %) (rest form))))
-          if (let [[_ test then else] form]
-               (if else
-                 (list 'if (transform env locals test)
-                       (transform env locals then)
-                       (transform env locals else))
-                 (list 'if (transform env locals test)
-                       (transform env locals then))))
+          if (if (< (count form) 3)
+               form ;; too few args — let analyzer report error
+               (let [[_ test then else] form
+                     t-test (transform env locals test)
+                     t-then (transform env locals then)
+                     t-else (when else (transform env locals else))]
+                 (if (or (needs-lifting? t-test) (if-with-iife-branch? t-test))
+                   ;; Lift test into let* binding — test is always evaluated so safe
+                   (let [[bindings stmts [new-test]] (lift-args locals [t-test])
+                         if-form (if t-else
+                                   (list 'if new-test t-then t-else)
+                                   (list 'if new-test t-then))]
+                     (apply list 'let* (vec bindings)
+                            (concat stmts [if-form])))
+                   (if t-else
+                     (list 'if t-test t-then t-else)
+                     (list 'if t-test t-then)))))
           fn* form
           quote form
           try form
