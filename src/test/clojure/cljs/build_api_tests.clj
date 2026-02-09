@@ -960,19 +960,29 @@
       (test/delete-out-files out))))
 
 (deftest test-cljs-3470-async-await-optimizations
-  (testing "Test that implicit IIFEs (due to let etc.) without `await` remain synchronous"
-    (let [out (.getPath (io/file (test/tmp-dir) "cljs-3570-async-await-optimizations-out"))]
-      (test/delete-out-files out)
-      (let [{:keys [inputs opts]} {:inputs (str (io/file "src" "test" "cljs_build"))
-                                   :opts {:main 'cljs-3470-async-await.core
-                                          :output-dir out
-                                          :optimizations :none
-                                          :closure-warnings {:check-types :off}}}
-            cenv (env/default-compiler-env)]
-        (build/build (build/inputs (io/file inputs "cljs_3470_async_await/core.cljs")) opts cenv))
-      (let [source (slurp (io/file out "cljs_3470_async_await/core.js"))]
-        (is (= 18 (count (re-seq #"\(await" source)))))
-      (test/delete-out-files out))))
+  (let [out (.getPath (io/file (test/tmp-dir) "cljs-3570-async-await-optimizations-out"))]
+    (test/delete-out-files out)
+    (let [{:keys [inputs opts]} {:inputs (str (io/file "src" "test" "cljs_build"))
+                                 :opts {:main 'cljs-3470-async-await.core
+                                        :output-dir out
+                                        :optimizations :none
+                                        :closure-warnings {:check-types :off}}}
+          cenv (env/default-compiler-env)]
+      (build/build (build/inputs (io/file inputs "cljs_3470_async_await/core.cljs")) opts cenv))
+    (let [source (slurp (io/file out "cljs_3470_async_await/core.js"))]
+      (testing "Test that implicit IIFEs (due to let etc.) without `await` remain synchronous"
+        (is (= 20 (count (re-seq #"\(await" source)))))
+      (testing "Test that ANF flattens nested lets, eliminating async IIFEs"
+        ;; anf-optimized has two nested lets with await in binding inits.
+        ;; Without ANF these would each produce an async IIFE.
+        ;; With ANF they are flattened — the only async function should be
+        ;; the function definition itself.
+        (let [;; Extract just the anf_optimized function body
+              fn-source (re-find #"(?s)anf_optimized = \(async function.*?\n\}\);" source)]
+          (is (some? fn-source) "anf_optimized function should exist in output")
+          (is (zero? (count (re-seq #"\(async function \(\)" fn-source)))
+               "ANF should eliminate all async IIFEs from nested lets"))))
+    (test/delete-out-files out)))
 
 #_(deftest test-advanced-source-maps
   (testing "Test that the `sources` of the final merged source map matches the

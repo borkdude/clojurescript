@@ -44,3 +44,12 @@
               (f (letfn [(f [x] x)]
                    (f (await 1)))))]
     (+ b1a b1b b2a b2b b3a b3b b4a b4b b5a b5b b6a b6b)))
+
+;; ANF optimization test: nested lets with await should be flattened,
+;; eliminating async IIFEs that would otherwise be generated.
+(defn ^:async anf-optimized []
+  (let [;; inner let flattened into outer — no IIFE
+        a (let [x (await (js/Promise.resolve 1))] (+ x 1))
+        ;; same pattern, second binding
+        b (let [y (await (js/Promise.resolve 2))] (+ y 1))]
+    (+ a b)))

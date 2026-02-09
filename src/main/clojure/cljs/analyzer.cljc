@@ -17,6 +17,7 @@
                      [cljs.analyzer.impl.namespaces :as nses]
                      [cljs.analyzer.passes.and-or :as and-or]
                      [cljs.analyzer.passes.lite :as lite]
+                     [cljs.anf :as anf]
                      [cljs.env :as env :refer [ensure]]
                      [cljs.externs :as externs]
                      [cljs.js-deps :as deps]
@@ -31,6 +32,7 @@
      :cljs (:require [cljs.analyzer.impl :as impl]
                      [cljs.analyzer.impl.namespaces :as nses]
                      [cljs.analyzer.passes.and-or :as and-or]
+                     [cljs.anf :as anf]
                      [cljs.analyzer.passes.lite :as lite]
                      [cljs.env :as env]
                      [cljs.reader :as edn]
@@ -2279,6 +2281,10 @@ x                          (not (contains? ret :info)))
         recur-frames    (cons recur-frame *recur-frames*)
         body-env        (assoc env :context :return :locals locals)
         body-form       `(do ~@body)
+        body-form       (if (:async env)
+                          (anf/transform (assoc body-env ::anf/get-expander get-expander)
+                            (set (keys locals)) body-form)
+                          body-form)
         expr            (when analyze-body?
                           (analyze-fn-method-body body-env body-form recur-frames))
         recurs          @(:flag recur-frame)]
