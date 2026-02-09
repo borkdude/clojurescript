@@ -74,6 +74,22 @@
                          body renames)]
           [out-bindings new-body])))))
 
+(defn- flatten-nested-lets
+  "Recursively extract bindings from nested let* bodies.
+   Returns [all-bindings final-body] where final-body is not a let*."
+  [locals bindings body]
+  (if (and (seq? body) (= 'let* (first body)))
+    (let [[_ inner-bindings & inner-body] body
+          body-form (if (= 1 (count inner-body))
+                      (first inner-body)
+                      (cons 'do inner-body))
+          [renamed-bindings renamed-body] (rename-inner-bindings locals inner-bindings body-form)
+          inner-syms (take-nth 2 renamed-bindings)]
+      (flatten-nested-lets (into locals (set inner-syms))
+                           (into bindings renamed-bindings)
+                           renamed-body))
+    [bindings body]))
+
 (defn- wrap-in-assign
   "Wrap the result of form in a js* assignment to sym.
    For let*, places the assignment on the body's last expression
@@ -97,7 +113,7 @@
           last-expr (peek body-vec)
           init-stmts (pop body-vec)]
       (apply list 'let* (vec bindings)
-        (conj init-stmts (list 'js* "(~{} = ~{})" sym last-expr))))
+        (conj init-stmts (wrap-in-assign sym last-expr))))
 
     (and (seq? form) (= 'if (first form)))
     (let [[_ test then else] form]
@@ -195,7 +211,12 @@
                   body-form (if (= 1 (count inner-body))
                               (first inner-body)
                               (cons 'do inner-body))
-                  [renamed-bindings renamed-body] (rename-inner-bindings current-locals inner-bindings body-form)
+                  [initial-bindings initial-body] (rename-inner-bindings current-locals inner-bindings body-form)
+                  ;; Recursively flatten nested let* in body
+                  [renamed-bindings renamed-body] (flatten-nested-lets
+                                                    (into current-locals (set (take-nth 2 initial-bindings)))
+                                                    (vec initial-bindings)
+                                                    initial-body)
                   inner-syms (take-nth 2 renamed-bindings)]
               (cond
                 ;; Flattened body is if-with-IIFE-branch → declare-assign, split let*
