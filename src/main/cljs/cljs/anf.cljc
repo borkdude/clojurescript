@@ -39,20 +39,6 @@
          (or (needs-lifting? then)
              (needs-lifting? else)))))
 
-(defn- wrap-in-assign
-  "Wrap the result of form in a js* assignment to sym.
-   For let*, places the assignment on the body's last expression
-   so the let* stays in statement position (no IIFE)."
-  [sym form]
-  (if (and (seq? form) (= 'let* (first form)))
-    (let [[_ bindings & body] form
-          body-vec (vec body)
-          last-expr (peek body-vec)
-          init-stmts (pop body-vec)]
-      (apply list 'let* bindings
-        (conj init-stmts (list 'js* "(~{} = ~{})" sym last-expr))))
-    (list 'js* "(~{} = ~{})" sym form)))
-
 (declare transform)
 
 (defn- replace-sym
@@ -84,6 +70,29 @@
         (let [new-body (reduce-kv (fn [form old new] (replace-sym form old new))
                          body renames)]
           [out-bindings new-body])))))
+
+(defn- wrap-in-assign
+  "Wrap the result of form in a js* assignment to sym.
+   For let*, places the assignment on the body's last expression
+   so the let* stays in statement position (no IIFE).
+   Renames inner bindings that shadow sym to avoid wrong assignment target."
+  [sym form]
+  (if (and (seq? form) (= 'let* (first form)))
+    (let [[_ bindings & body] form
+          binding-syms (set (take-nth 2 bindings))
+          body-form (if (= 1 (count body)) (first body) (cons 'do body))
+          ;; Rename any inner bindings that shadow the assignment target
+          [bindings body-form] (if (contains? binding-syms sym)
+                                 (rename-inner-bindings #{sym} bindings body-form)
+                                 [bindings body-form])
+          body-vec (if (and (seq? body-form) (= 'do (first body-form)))
+                     (vec (rest body-form))
+                     [body-form])
+          last-expr (peek body-vec)
+          init-stmts (pop body-vec)]
+      (apply list 'let* (vec bindings)
+        (conj init-stmts (list 'js* "(~{} = ~{})" sym last-expr))))
+    (list 'js* "(~{} = ~{})" sym form)))
 
 (defn- lift-args
   "Given a list of transformed args, extract any IIFE-causing forms into
@@ -174,9 +183,32 @@
                               (cons 'do inner-body))
                   [renamed-bindings renamed-body] (rename-inner-bindings current-locals inner-bindings body-form)
                   inner-syms (take-nth 2 renamed-bindings)]
-              (recur (rest pairs)
-                     (-> acc (into renamed-bindings) (conj sym renamed-body))
-                     (into (conj current-locals sym) inner-syms)))
+              (if (if-with-iife-branch? renamed-body)
+                ;; Flattened body is if-with-IIFE-branch → declare-assign, split let*
+                (let [new-locals (into (conj current-locals sym) inner-syms)
+                      [_ test then else] renamed-body
+                      if-stmt (if else
+                                (list 'if test
+                                      (wrap-in-assign sym then)
+                                      (wrap-in-assign sym else))
+                                (list 'if test
+                                      (wrap-in-assign sym then)))
+                      remaining (vec (mapcat identity (rest pairs)))
+                      inner (if (seq remaining)
+                              (transform-let* env new-locals remaining body)
+                              (let [t-body (doall (map #(transform env new-locals %) body))]
+                                (if (= 1 (count t-body))
+                                  (first t-body)
+                                  (cons 'do t-body))))]
+                  (apply list 'let* (vec (-> acc (into renamed-bindings) (conj sym (list 'js* "void 0"))))
+                         if-stmt
+                         (if (and (seq? inner) (= 'do (first inner)))
+                           (rest inner)
+                           [inner])))
+                ;; Normal flatten: recur
+                (recur (rest pairs)
+                       (-> acc (into renamed-bindings) (conj sym renamed-body))
+                       (into (conj current-locals sym) inner-syms))))
 
             ;; If with IIFE branches → declare-assign, split let*
             (if-with-iife-branch? t-init)
