@@ -24,11 +24,28 @@
   '#{if def fn* do let* loop* letfn* throw try recur new set!
      ns deftype* defrecord* . js* & quote case* var ns* await})
 
+(defn- preserve-meta
+  "Transfer metadata from original form to rebuilt form.
+   Only applies when rebuilt supports metadata (not primitives like strings/numbers)."
+  [original rebuilt]
+  (if-let [m (meta original)]
+    (if (instance? #?(:clj clojure.lang.IObj :cljs cljs.core/IWithMeta) rebuilt)
+      (with-meta rebuilt m)
+      rebuilt)
+    rebuilt))
+
 (defn- needs-lifting?
   "Returns true if form would cause an IIFE when compiled in expression position."
   [form]
   (and (seq? form)
        (contains? #{'let* 'loop* 'try 'letfn*} (first form))))
+
+(defn- do-with-statements?
+  "Returns true if form is a do with 2+ sub-forms (causes IIFE in expr position)."
+  [form]
+  (and (seq? form)
+       (= 'do (first form))
+       (> (count (rest form)) 1)))
 
 (defn- if-with-iife-branch?
   "Returns true if form is an if where any branch needs-lifting? or is
@@ -39,6 +56,8 @@
        (let [[_ _test then else] form]
          (or (needs-lifting? then)
              (needs-lifting? else)
+             (do-with-statements? then)
+             (do-with-statements? else)
              (if-with-iife-branch? then)
              (if-with-iife-branch? else)))))
 
@@ -121,6 +140,12 @@
         (list 'if test (wrap-in-assign sym then) (wrap-in-assign sym else))
         (list 'if test (wrap-in-assign sym then))))
 
+    (and (seq? form) (= 'do (first form)))
+    (let [do-forms (vec (rest form))
+          init-stmts (pop do-forms)
+          last-expr (peek do-forms)]
+      (apply list 'do (conj init-stmts (wrap-in-assign sym last-expr))))
+
     :else
     (list 'js* "(~{} = ~{})" sym form)))
 
@@ -133,63 +158,73 @@
   [locals args]
   (reduce
     (fn [[bindings stmts new-args] arg]
-      (cond
-        (needs-lifting? arg)
-        (if (= 'let* (first arg))
-          ;; Flatten let*: hoist its bindings, use body directly if trivial
-          (let [[_ inner-bindings & body] arg
-                body-form (if (= 1 (count body))
-                            (first body)
-                            (cons 'do body))
-                [renamed-bindings renamed-body] (rename-inner-bindings locals inner-bindings body-form)]
-            (if (needs-lifting? renamed-body)
-              ;; Body itself needs lifting — bind to gensym
-              (let [result-sym (gensym "anf__")]
-                [(-> bindings
-                     (into renamed-bindings)
-                     (conj result-sym renamed-body))
+      ;; Unwrap do-with-statements: hoist stmts into stmts accumulator,
+      ;; then process last-expr through the normal cond
+      (let [[stmts arg] (if (do-with-statements? arg)
+                           (let [do-forms (vec (rest arg))
+                                 do-stmts (pop do-forms)
+                                 last-expr (peek do-forms)]
+                             [(into stmts do-stmts) last-expr])
+                           [stmts arg])]
+        (cond
+          (needs-lifting? arg)
+          (if (= 'let* (first arg))
+            ;; Flatten let*: hoist its bindings, use body directly if trivial
+            (let [[_ inner-bindings & body] arg
+                  body-form (if (= 1 (count body))
+                              (first body)
+                              (cons 'do body))
+                  [renamed-bindings renamed-body] (rename-inner-bindings locals inner-bindings body-form)]
+              (if (needs-lifting? renamed-body)
+                ;; Body itself needs lifting — bind to gensym
+                (let [result-sym (gensym "anf__")]
+                  [(-> bindings
+                       (into renamed-bindings)
+                       (conj result-sym renamed-body))
+                   stmts
+                   (conj new-args result-sym)])
+                ;; Body is trivial — use directly as arg
+                [(into bindings renamed-bindings)
                  stmts
-                 (conj new-args result-sym)])
-              ;; Body is trivial — use directly as arg
-              [(into bindings renamed-bindings)
+                 (conj new-args renamed-body)]))
+            ;; Other IIFE-causing forms: bind whole thing to gensym
+            (let [result-sym (gensym "anf__")]
+              [(conj bindings result-sym arg)
                stmts
-               (conj new-args renamed-body)]))
-          ;; Other IIFE-causing forms: bind whole thing to gensym
-          (let [result-sym (gensym "anf__")]
-            [(conj bindings result-sym arg)
-             stmts
-             (conj new-args result-sym)]))
+               (conj new-args result-sym)]))
 
-        (if-with-iife-branch? arg)
-        ;; Declare-assign: declare tmp, use if-as-statement with js* assignments
-        (let [tmp (gensym "anf__")
-              [_ test then else] arg]
-          [(conj bindings tmp (list 'js* "void 0"))
-           (conj stmts (if else
-                         (list 'if test
-                               (wrap-in-assign tmp then)
-                               (wrap-in-assign tmp else))
-                         (list 'if test
-                               (wrap-in-assign tmp then))))
-           (conj new-args tmp)])
+          (if-with-iife-branch? arg)
+          ;; Declare-assign: declare tmp, use if-as-statement with js* assignments
+          (let [tmp (gensym "anf__")
+                [_ test then else] arg]
+            [(conj bindings tmp (list 'js* "void 0"))
+             (conj stmts (if else
+                           (list 'if test
+                                 (wrap-in-assign tmp then)
+                                 (wrap-in-assign tmp else))
+                           (list 'if test
+                                 (wrap-in-assign tmp then))))
+             (conj new-args tmp)])
 
-        :else
-        [bindings stmts (conj new-args arg)]))
+          :else
+          [bindings stmts (conj new-args arg)])))
     [[] [] []]
     args))
 
 (defn- transform-args
   "Transform function call args. If any transformed arg is IIFE-causing
    or is an if with IIFE branches, extract into surrounding let* bindings.
-   If-with-IIFE-branches uses declare-assign pattern with js*."
-  [env locals op args]
+   If-with-IIFE-branches uses declare-assign pattern with js*.
+   Preserves metadata from the original form on the rebuilt call."
+  [env locals form op args]
   (let [transformed (doall (map #(transform env locals %) args))]
     (if (or (some needs-lifting? transformed)
-            (some if-with-iife-branch? transformed))
+            (some if-with-iife-branch? transformed)
+            (some do-with-statements? transformed))
       (let [[bindings stmts new-args] (lift-args locals transformed)]
         (apply list 'let* (vec bindings)
-               (concat stmts [(cons op new-args)])))
-      (cons op transformed))))
+               (concat stmts [(preserve-meta form (cons op new-args))])))
+      (preserve-meta form (cons op transformed)))))
 
 (defn- transform-let*
   "Transform let* form: recursively transform binding inits and body.
@@ -243,8 +278,7 @@
                            [inner])))
 
                 ;; Body is do-with-statements → split with declare-assign
-                (and (seq? renamed-body) (= 'do (first renamed-body))
-                     (> (count (rest renamed-body)) 1))
+                (do-with-statements? renamed-body)
                 (let [do-forms (vec (rest renamed-body))
                       stmts (pop do-forms)
                       last-expr (peek do-forms)
@@ -258,7 +292,7 @@
                                   (cons 'do t-body))))]
                   (apply list 'let* (vec (-> acc (into renamed-bindings) (conj sym (list 'js* "void 0"))))
                          (concat stmts
-                                 [(list 'js* "(~{} = ~{})" sym last-expr)]
+                                 [(wrap-in-assign sym last-expr)]
                                  (if (and (seq? inner) (= 'do (first inner)))
                                    (rest inner)
                                    [inner]))))
@@ -293,6 +327,26 @@
                        (rest inner)
                        [inner])))
 
+            ;; do-with-statements in binding init → split: stmts in body, assign last-expr
+            (do-with-statements? t-init)
+            (let [do-forms (vec (rest t-init))
+                  do-stmts (pop do-forms)
+                  last-expr (peek do-forms)
+                  new-locals (conj current-locals sym)
+                  remaining (vec (mapcat identity (rest pairs)))
+                  inner (if (seq remaining)
+                          (transform-let* env new-locals remaining body)
+                          (let [t-body (doall (map #(transform env new-locals %) body))]
+                            (if (= 1 (count t-body))
+                              (first t-body)
+                              (cons 'do t-body))))]
+              (apply list 'let* (vec (conj acc sym (list 'js* "void 0")))
+                     (concat do-stmts
+                             [(wrap-in-assign sym last-expr)]
+                             (if (and (seq? inner) (= 'do (first inner)))
+                               (rest inner)
+                               [inner]))))
+
             ;; Normal binding
             :else
             (recur (rest pairs)
@@ -304,10 +358,17 @@
 
 (defn- try-macroexpand-1
   "Attempt to macroexpand form once using ::get-expander from env.
+   Merges ANF-tracked locals into env so macros like reify see them.
    Returns original form if no expander or expansion fails."
-  [env form]
+  [env locals form]
   (if-let [get-exp (::get-expander env)]
-    (let [op (first form)]
+    (let [op (first form)
+          ;; Merge ANF-tracked locals into :locals so macros see them
+          env (update env :locals
+                (fn [m]
+                  (reduce (fn [m sym]
+                            (if (contains? m sym) m (assoc m sym {:name sym})))
+                    (or m {}) locals)))]
       (if-let [mac-var (when (symbol? op) (get-exp op env))]
         (try
           (apply #?(:clj @mac-var :cljs mac-var) form env (rest form))
@@ -325,61 +386,74 @@
   [env locals form]
   (cond
     (seq? form)
-    (let [op (first form)
-          ;; Try to macroexpand if not a special form and not locally bound
-          expanded (if (and (symbol? op)
-                           (not (contains? specials op))
-                           (not (contains? locals op)))
-                    (try-macroexpand-1 env form)
-                    form)]
-      (if (not= expanded form)
-        ;; Macro expanded — recurse on expanded form
-        (transform env locals expanded)
-        ;; No expansion — handle by form type
-        (case op
-          let* (let [[_ bindings & body] form]
-                 (transform-let* env locals bindings body))
-          loop* (let [[_ bindings & body] form
-                       pairs (partition 2 bindings)
-                       [new-bindings new-locals]
-                       (reduce
-                         (fn [[acc current-locals] [sym init]]
-                           [(conj acc sym (transform env current-locals init))
-                            (conj current-locals sym)])
-                         [[] locals]
-                         pairs)
-                       t-body (doall (map #(transform env new-locals %) body))]
-                   (apply list 'loop* (vec new-bindings) t-body))
-          do (cons 'do (doall (map #(transform env locals %) (rest form))))
-          if (if (< (count form) 3)
-               form ;; too few args — let analyzer report error
-               (let [[_ test then else] form
-                     t-test (transform env locals test)
-                     t-then (transform env locals then)
-                     t-else (when else (transform env locals else))]
-                 (if (or (needs-lifting? t-test) (if-with-iife-branch? t-test))
-                   ;; Lift test into let* binding — test is always evaluated so safe
-                   (let [[bindings stmts [new-test]] (lift-args locals [t-test])
-                         if-form (if t-else
-                                   (list 'if new-test t-then t-else)
-                                   (list 'if new-test t-then))]
-                     (apply list 'let* (vec bindings)
-                            (concat stmts [if-form])))
-                   (if t-else
-                     (list 'if t-test t-then t-else)
-                     (list 'if t-test t-then)))))
-          fn* form
-          quote form
-          try form
-          case* form
-          letfn* form
-          ;; General expression: function call or other
-          (transform-args env locals op (rest form)))))
+    (if-not (seq form)
+      form ;; empty list — return as-is
+      (let [op (first form)
+            ;; Try to macroexpand if not a special form and not locally bound
+            expanded (if (and (symbol? op)
+                             (not (contains? specials op))
+                             (not (contains? locals op)))
+                      (try-macroexpand-1 env locals form)
+                      form)]
+        (if (not= expanded form)
+          ;; Macro expanded — recurse on expanded form, preserving original metadata
+          (preserve-meta form (transform env locals expanded))
+          ;; No expansion — handle by form type
+          (case op
+            let* (let [[_ bindings & body] form]
+                   (transform-let* env locals bindings body))
+            loop* (let [[_ bindings & body] form
+                        pairs (partition 2 bindings)
+                        [new-bindings new-locals]
+                        (reduce
+                          (fn [[acc current-locals] [sym init]]
+                            [(conj acc sym (transform env current-locals init))
+                             (conj current-locals sym)])
+                          [[] locals]
+                          pairs)
+                        t-body (doall (map #(transform env new-locals %) body))]
+                    (preserve-meta form (apply list 'loop* (vec new-bindings) t-body)))
+            do (let [forms (doall (map #(transform env locals %) (rest form)))]
+                 (if (= 1 (count forms))
+                   (first forms)
+                   (preserve-meta form (cons 'do forms))))
+            if (if (< (count form) 3)
+                 form ;; too few args — let analyzer report error
+                 (let [[_ test then else] form
+                       t-test (transform env locals test)
+                       t-then (transform env locals then)
+                       t-else (when else (transform env locals else))]
+                   (if (or (needs-lifting? t-test) (if-with-iife-branch? t-test) (do-with-statements? t-test))
+                     ;; Lift test into let* binding — test is always evaluated so safe
+                     (let [[bindings stmts [new-test]] (lift-args locals [t-test])
+                           if-form (preserve-meta form
+                                     (if t-else
+                                       (list 'if new-test t-then t-else)
+                                       (list 'if new-test t-then)))]
+                       (apply list 'let* (vec bindings)
+                              (concat stmts [if-form])))
+                     (preserve-meta form
+                       (if t-else
+                         (list 'if t-test t-then t-else)
+                         (list 'if t-test t-then))))))
+            fn* form
+            quote form
+            try form
+            case* form
+            letfn* form
+            deftype* form
+            defrecord* form
+            ns form
+            ns* form
+            def form
+            ;; General expression: function call or other
+            (transform-args env locals form op (rest form))))))
 
     (vector? form)
     (let [transformed (doall (map #(transform env locals %) form))]
       (if (or (some needs-lifting? transformed)
-              (some if-with-iife-branch? transformed))
+              (some if-with-iife-branch? transformed)
+              (some do-with-statements? transformed))
         (let [[bindings stmts new-elems] (lift-args locals transformed)]
           (apply list 'let* (vec bindings)
                  (concat stmts [(vec new-elems)])))
