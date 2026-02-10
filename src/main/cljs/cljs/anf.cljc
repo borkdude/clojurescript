@@ -26,11 +26,13 @@
 
 (defn- preserve-meta
   "Transfer metadata from original form to rebuilt form.
+   Merges metadata so inner type tags (e.g. :tag 'boolean from bool-expr)
+   are not overwritten by outer source location metadata.
    Only applies when rebuilt supports metadata (not primitives like strings/numbers)."
   [original rebuilt]
   (if-let [m (meta original)]
     (if (instance? #?(:clj clojure.lang.IObj :cljs cljs.core/IWithMeta) rebuilt)
-      (with-meta rebuilt m)
+      (with-meta rebuilt (merge (meta rebuilt) m))
       rebuilt)
     rebuilt))
 
@@ -136,7 +138,7 @@
 
     (and (seq? form) (= 'if (first form)))
     (let [[_ test then else] form]
-      (if else
+      (if (> (count form) 3)
         (list 'if test (wrap-in-assign sym then) (wrap-in-assign sym else))
         (list 'if test (wrap-in-assign sym then))))
 
@@ -198,7 +200,7 @@
           (let [tmp (gensym "anf__")
                 [_ test then else] arg]
             [(conj bindings tmp (list 'js* "void 0"))
-             (conj stmts (if else
+             (conj stmts (if (> (count arg) 3)
                            (list 'if test
                                  (wrap-in-assign tmp then)
                                  (wrap-in-assign tmp else))
@@ -258,7 +260,7 @@
                 (if-with-iife-branch? renamed-body)
                 (let [new-locals (into (conj current-locals sym) inner-syms)
                       [_ test then else] renamed-body
-                      if-stmt (if else
+                      if-stmt (if (> (count renamed-body) 3)
                                 (list 'if test
                                       (wrap-in-assign sym then)
                                       (wrap-in-assign sym else))
@@ -307,7 +309,7 @@
             (if-with-iife-branch? t-init)
             (let [new-locals (conj current-locals sym)
                   [_ test then else] t-init
-                  if-stmt (if else
+                  if-stmt (if (> (count t-init) 3)
                             (list 'if test
                                   (wrap-in-assign sym then)
                                   (wrap-in-assign sym else))
@@ -422,18 +424,19 @@
                  (let [[_ test then else] form
                        t-test (transform env locals test)
                        t-then (transform env locals then)
-                       t-else (when else (transform env locals else))]
+                       has-else (> (count form) 3)
+                       t-else (when has-else (transform env locals else))]
                    (if (or (needs-lifting? t-test) (if-with-iife-branch? t-test) (do-with-statements? t-test))
                      ;; Lift test into let* binding — test is always evaluated so safe
                      (let [[bindings stmts [new-test]] (lift-args locals [t-test])
                            if-form (preserve-meta form
-                                     (if t-else
+                                     (if has-else
                                        (list 'if new-test t-then t-else)
                                        (list 'if new-test t-then)))]
                        (apply list 'let* (vec bindings)
                               (concat stmts [if-form])))
                      (preserve-meta form
-                       (if t-else
+                       (if has-else
                          (list 'if t-test t-then t-else)
                          (list 'if t-test t-then))))))
             fn* form
