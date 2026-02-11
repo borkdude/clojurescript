@@ -176,7 +176,10 @@
                   body-form (if (= 1 (count body))
                               (first body)
                               (cons 'do body))
-                  [renamed-bindings renamed-body] (rename-inner-bindings locals inner-bindings body-form)]
+                  ;; Include previously accumulated binding syms so we rename
+                  ;; collisions (e.g. two when-let gensyms with same name)
+                  all-locals (into locals (set (take-nth 2 bindings)))
+                  [renamed-bindings renamed-body] (rename-inner-bindings all-locals inner-bindings body-form)]
               (if (needs-lifting? renamed-body)
                 ;; Body itself needs lifting — bind to gensym
                 (let [result-sym (gensym "anf__")]
