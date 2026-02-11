@@ -12,7 +12,7 @@
   #?(:cljs (:require-macros [cljs.analyzer.macros
                              :refer [allowing-redef disallowing-ns* disallowing-recur
                                      no-warn with-warning-handlers wrapping-errors]]
-             [cljs.analyzer :refer [enable-anf! disable-anf!]]
+
              [cljs.env.macros :refer [ensure]]))
   #?(:clj  (:require [cljs.analyzer.impl :as impl]
                      [cljs.analyzer.impl.namespaces :as nses]
@@ -74,22 +74,6 @@
 (def ^:dynamic *passes* nil)
 (def ^:dynamic *file-defs* nil)
 (def ^:dynamic *private-var-access-nowarn* false)
-(def enable-anf (atom false))
-
-#?(:clj
-   (defmacro enable-anf!
-     "Enable ANF transformation for all function methods. Call from CLJS REPL."
-     []
-     (reset! enable-anf true)
-     nil))
-
-#?(:clj
-   (defmacro disable-anf!
-     "Disable ANF transformation (async-only). Call from CLJS REPL."
-     []
-     (reset! enable-anf false)
-     nil))
-
 (def ^:dynamic *await-called* (atom false))
 
 (defn await-called! [atm]
@@ -2298,10 +2282,12 @@ x                          (not (contains? ret :info)))
         recur-frames    (cons recur-frame *recur-frames*)
         body-env        (assoc env :context :return :locals locals)
         body-form       `(do ~@body)
-        body-form       (if true #_(or (:async env) @enable-anf)
-                          (anf/transform (assoc body-env ::anf/get-expander get-expander)
-                            (set (keys locals)) body-form)
-                          body-form)
+        body-form       (anf/transform (assoc body-env ::anf/get-expander get-expander)
+                          (set (keys locals)) body-form)
+        ;; ANF may strip single-form (do x) → x; re-wrap so analyzer always sees do
+        body-form       (if (and (seq? body-form) (= 'do (first body-form)))
+                          body-form
+                          `(do ~body-form))
         expr            (when analyze-body?
                           (analyze-fn-method-body body-env body-form recur-frames))
         recurs          @(:flag recur-frame)]

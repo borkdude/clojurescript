@@ -208,6 +208,19 @@
             ;; else branch: (let* [y 2] (js* "(~{} = ~{})" sym y))
             (is (= 'let* (first else)))))))))
 
+(deftest flattened-let*-body-is-if-with-iife
+  (testing "After flattening let*, body that is if-with-iife gets declare-assign"
+    ;; (f (let* [t (g)] (if t (let* [x t] x) nil)))
+    ;; Without fix: the if-with-iife body passes through as arg → IIFE.
+    ;; With fix: declare-assign on the flattened body.
+    (with-gensyms
+      (is (= '(let* [t (g) anf__1 (js* "void 0")]
+                (if t
+                  (let* [x t] (js* "(~{} = ~{})" anf__1 x))
+                  (js* "(~{} = ~{})" anf__1 nil))
+                (f anf__1))
+             (t '(f (let* [t (g)] (if t (let* [x t] x) nil)))))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Variable shadowing — rename-inner-bindings
 ;; ---------------------------------------------------------------------------

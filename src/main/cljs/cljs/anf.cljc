@@ -36,6 +36,13 @@
       rebuilt)
     rebuilt))
 
+(defn- bodies->form
+  "Wrap multiple body forms: single form returned as-is, multiple wrapped in do."
+  [bodies]
+  (if (= 1 (count bodies))
+    (first bodies)
+    (cons 'do bodies)))
+
 (defn- needs-lifting?
   "Returns true if form would cause an IIFE when compiled in expression position."
   [form]
@@ -101,9 +108,7 @@
   [locals bindings body]
   (if (and (seq? body) (= 'let* (first body)))
     (let [[_ inner-bindings & inner-body] body
-          body-form (if (= 1 (count inner-body))
-                      (first inner-body)
-                      (cons 'do inner-body))
+          body-form (bodies->form inner-body)
           [renamed-bindings renamed-body] (rename-inner-bindings locals inner-bindings body-form)
           inner-syms (take-nth 2 renamed-bindings)]
       (flatten-nested-lets (into locals (set inner-syms))
@@ -151,6 +156,27 @@
     :else
     (list 'js* "(~{} = ~{})" sym form)))
 
+(defn- form->assign-stmts
+  "Convert an IIFE-causing form into a sequence of statements ending with
+   an assignment to assign-sym. For if-with-iife-branch, wraps each branch.
+   For do-with-statements, hoists statements and assigns the last expression."
+  [assign-sym form]
+  (cond
+    (if-with-iife-branch? form)
+    (let [[_ test then else] form]
+      [(if (> (count form) 3)
+         (list 'if test
+               (wrap-in-assign assign-sym then)
+               (wrap-in-assign assign-sym else))
+         (list 'if test
+               (wrap-in-assign assign-sym then)))])
+
+    (do-with-statements? form)
+    (let [do-forms (vec (rest form))
+          stmts (pop do-forms)
+          last-expr (peek do-forms)]
+      (conj (vec stmts) (wrap-in-assign assign-sym last-expr)))))
+
 (defn- lift-args
   "Given a list of transformed args, extract any IIFE-causing forms into
    let* bindings. Returns [bindings stmts new-args].
@@ -173,22 +199,38 @@
           (if (= 'let* (first arg))
             ;; Flatten let*: hoist its bindings, use body directly if trivial
             (let [[_ inner-bindings & body] arg
-                  body-form (if (= 1 (count body))
-                              (first body)
-                              (cons 'do body))
+                  body-form (bodies->form body)
                   ;; Include previously accumulated binding syms so we rename
                   ;; collisions (e.g. two when-let gensyms with same name)
                   all-locals (into locals (set (take-nth 2 bindings)))
                   [renamed-bindings renamed-body] (rename-inner-bindings all-locals inner-bindings body-form)]
-              (if (needs-lifting? renamed-body)
+              (cond
                 ;; Body itself needs lifting — bind to gensym
+                (needs-lifting? renamed-body)
                 (let [result-sym (gensym "anf__")]
                   [(-> bindings
                        (into renamed-bindings)
                        (conj result-sym renamed-body))
                    stmts
                    (conj new-args result-sym)])
+                ;; Body is if-with-iife-branch — declare-assign
+                (if-with-iife-branch? renamed-body)
+                (let [tmp (gensym "anf__")]
+                  [(-> bindings
+                       (into renamed-bindings)
+                       (conj tmp (list 'js* "void 0")))
+                   (into stmts (form->assign-stmts tmp renamed-body))
+                   (conj new-args tmp)])
+                ;; Body is do-with-statements — hoist stmts, use last-expr as arg
+                (do-with-statements? renamed-body)
+                (let [do-forms (vec (rest renamed-body))
+                      do-stmts (pop do-forms)
+                      last-expr (peek do-forms)]
+                  [(into bindings renamed-bindings)
+                   (into stmts do-stmts)
+                   (conj new-args last-expr)])
                 ;; Body is trivial — use directly as arg
+                :else
                 [(into bindings renamed-bindings)
                  stmts
                  (conj new-args renamed-body)]))
@@ -231,6 +273,32 @@
                (concat stmts [(preserve-meta form (cons op new-args))])))
       (preserve-meta form (cons op transformed)))))
 
+(declare transform-let*)
+
+(defn- declare-assign-let*
+  "Common pattern for declare-assign in transform-let*.
+   Declares assign-sym = void 0, emits assignment statements, then processes
+   remaining bindings and body. Handles shadow renaming when sym is already bound."
+  [env current-locals sym acc extra-bindings extra-syms init-form pairs body]
+  (let [shadowed? (contains? current-locals sym)
+        assign-sym (if shadowed? (gensym (str (name sym) "__")) sym)
+        new-locals (into (conj current-locals assign-sym) extra-syms)
+        stmts (form->assign-stmts assign-sym init-form)
+        remaining (vec (mapcat identity (rest pairs)))
+        [remaining body] (if shadowed?
+                           [(mapv #(replace-sym % sym assign-sym) remaining)
+                            (map #(replace-sym % sym assign-sym) body)]
+                           [remaining body])
+        inner (if (seq remaining)
+                (transform-let* env new-locals remaining body)
+                (let [t-body (doall (map #(transform env new-locals %) body))]
+                  (bodies->form t-body)))]
+    (apply list 'let* (vec (-> acc (into extra-bindings) (conj assign-sym (list 'js* "void 0"))))
+           (concat stmts
+                   (if (and (seq? inner) (= 'do (first inner)))
+                     (rest inner)
+                     [inner])))))
+
 (defn- transform-let*
   "Transform let* form: recursively transform binding inits and body.
    Flattens nested let* in binding inits to avoid IIFEs.
@@ -248,9 +316,7 @@
             ;; Flatten nested let*
             (and (seq? t-init) (= 'let* (first t-init)))
             (let [[_ inner-bindings & inner-body] t-init
-                  body-form (if (= 1 (count inner-body))
-                              (first inner-body)
-                              (cons 'do inner-body))
+                  body-form (bodies->form inner-body)
                   [initial-bindings initial-body] (rename-inner-bindings current-locals inner-bindings body-form)
                   ;; Recursively flatten nested let* in body
                   [renamed-bindings renamed-body] (flatten-nested-lets
@@ -258,127 +324,21 @@
                                                     (vec initial-bindings)
                                                     initial-body)
                   inner-syms (take-nth 2 renamed-bindings)]
-              (cond
-                ;; Flattened body is if-with-IIFE-branch → declare-assign, split let*
-                ;; When sym shadows a previous binding, rename to gensym to avoid clobbering
-                (if-with-iife-branch? renamed-body)
-                (let [shadowed? (contains? current-locals sym)
-                      assign-sym (if shadowed? (gensym (str (name sym) "__")) sym)
-                      new-locals (into (conj current-locals assign-sym) inner-syms)
-                      [_ test then else] renamed-body
-                      if-stmt (if (> (count renamed-body) 3)
-                                (list 'if test
-                                      (wrap-in-assign assign-sym then)
-                                      (wrap-in-assign assign-sym else))
-                                (list 'if test
-                                      (wrap-in-assign assign-sym then)))
-                      remaining (vec (mapcat identity (rest pairs)))
-                      [remaining body] (if shadowed?
-                                         [(mapv #(replace-sym % sym assign-sym) remaining)
-                                          (map #(replace-sym % sym assign-sym) body)]
-                                         [remaining body])
-                      inner (if (seq remaining)
-                              (transform-let* env new-locals remaining body)
-                              (let [t-body (doall (map #(transform env new-locals %) body))]
-                                (if (= 1 (count t-body))
-                                  (first t-body)
-                                  (cons 'do t-body))))]
-                  (apply list 'let* (vec (-> acc (into renamed-bindings) (conj assign-sym (list 'js* "void 0"))))
-                         if-stmt
-                         (if (and (seq? inner) (= 'do (first inner)))
-                           (rest inner)
-                           [inner])))
-
-                ;; Body is do-with-statements → split with declare-assign
-                ;; When sym shadows a previous binding, rename to gensym to avoid clobbering
-                (do-with-statements? renamed-body)
-                (let [shadowed? (contains? current-locals sym)
-                      assign-sym (if shadowed? (gensym (str (name sym) "__")) sym)
-                      do-forms (vec (rest renamed-body))
-                      stmts (pop do-forms)
-                      last-expr (peek do-forms)
-                      new-locals (into (conj current-locals assign-sym) inner-syms)
-                      remaining (vec (mapcat identity (rest pairs)))
-                      [remaining body] (if shadowed?
-                                         [(mapv #(replace-sym % sym assign-sym) remaining)
-                                          (map #(replace-sym % sym assign-sym) body)]
-                                         [remaining body])
-                      inner (if (seq remaining)
-                              (transform-let* env new-locals remaining body)
-                              (let [t-body (doall (map #(transform env new-locals %) body))]
-                                (if (= 1 (count t-body))
-                                  (first t-body)
-                                  (cons 'do t-body))))]
-                  (apply list 'let* (vec (-> acc (into renamed-bindings) (conj assign-sym (list 'js* "void 0"))))
-                         (concat stmts
-                                 [(wrap-in-assign assign-sym last-expr)]
-                                 (if (and (seq? inner) (= 'do (first inner)))
-                                   (rest inner)
-                                   [inner]))))
-
+              (if (or (if-with-iife-branch? renamed-body)
+                      (do-with-statements? renamed-body))
+                ;; Flattened body needs declare-assign
+                (declare-assign-let* env current-locals sym acc
+                  renamed-bindings inner-syms renamed-body pairs body)
                 ;; Normal flatten: recur
-                :else
                 (recur (rest pairs)
                        (-> acc (into renamed-bindings) (conj sym renamed-body))
                        (into (conj current-locals sym) inner-syms))))
 
-            ;; If with IIFE branches → declare-assign, split let*
-            ;; When sym shadows a previous binding, rename to gensym to avoid clobbering
-            (if-with-iife-branch? t-init)
-            (let [shadowed? (contains? current-locals sym)
-                  assign-sym (if shadowed? (gensym (str (name sym) "__")) sym)
-                  new-locals (conj current-locals assign-sym)
-                  [_ test then else] t-init
-                  if-stmt (if (> (count t-init) 3)
-                            (list 'if test
-                                  (wrap-in-assign assign-sym then)
-                                  (wrap-in-assign assign-sym else))
-                            (list 'if test
-                                  (wrap-in-assign assign-sym then)))
-                  ;; Process remaining bindings + body as inner let* or just body
-                  remaining (vec (mapcat identity (rest pairs)))
-                  [remaining body] (if shadowed?
-                                     [(mapv #(replace-sym % sym assign-sym) remaining)
-                                      (map #(replace-sym % sym assign-sym) body)]
-                                     [remaining body])
-                  inner (if (seq remaining)
-                          (transform-let* env new-locals remaining body)
-                          (let [t-body (doall (map #(transform env new-locals %) body))]
-                            (if (= 1 (count t-body))
-                              (first t-body)
-                              (cons 'do t-body))))]
-              (apply list 'let* (vec (conj acc assign-sym (list 'js* "void 0")))
-                     if-stmt
-                     (if (and (seq? inner) (= 'do (first inner)))
-                       (rest inner)
-                       [inner])))
-
-            ;; do-with-statements in binding init → split: stmts in body, assign last-expr
-            ;; When sym shadows a previous binding, rename to gensym to avoid clobbering
-            (do-with-statements? t-init)
-            (let [shadowed? (contains? current-locals sym)
-                  assign-sym (if shadowed? (gensym (str (name sym) "__")) sym)
-                  do-forms (vec (rest t-init))
-                  do-stmts (pop do-forms)
-                  last-expr (peek do-forms)
-                  new-locals (conj current-locals assign-sym)
-                  remaining (vec (mapcat identity (rest pairs)))
-                  [remaining body] (if shadowed?
-                                     [(mapv #(replace-sym % sym assign-sym) remaining)
-                                      (map #(replace-sym % sym assign-sym) body)]
-                                     [remaining body])
-                  inner (if (seq remaining)
-                          (transform-let* env new-locals remaining body)
-                          (let [t-body (doall (map #(transform env new-locals %) body))]
-                            (if (= 1 (count t-body))
-                              (first t-body)
-                              (cons 'do t-body))))]
-              (apply list 'let* (vec (conj acc assign-sym (list 'js* "void 0")))
-                     (concat do-stmts
-                             [(wrap-in-assign assign-sym last-expr)]
-                             (if (and (seq? inner) (= 'do (first inner)))
-                               (rest inner)
-                               [inner]))))
+            ;; If with IIFE branches or do-with-statements → declare-assign
+            (or (if-with-iife-branch? t-init)
+                (do-with-statements? t-init))
+            (declare-assign-let* env current-locals sym acc
+              [] [] t-init pairs body)
 
             ;; Normal binding
             :else
@@ -404,7 +364,22 @@
                     (or m {}) locals)))]
       (if-let [mac-var (when (symbol? op) (get-exp op env))]
         (try
-          (apply #?(:clj @mac-var :cljs mac-var) form env (rest form))
+          (let [expanded (apply #?(:clj @mac-var :cljs mac-var) form env (rest form))]
+            ;; Mirror analyzer's macroexpand-1*: when a macro expands to js*,
+            ;; transfer :js-op and :numeric metadata so the analyzer can
+            ;; still infer the return type and emit proper warnings.
+            (if (and (seq? expanded) (= 'js* (first expanded)))
+              (let [sym (if (some? (namespace op))
+                          op
+                          (symbol "cljs.core" (str op)))
+                    js-op {:js-op sym}
+                    numeric #?(:clj  (:cljs.analyzer/numeric (meta mac-var))
+                               :cljs (get (meta mac-var) :cljs.analyzer/numeric))
+                    js-op (if (true? numeric)
+                            (assoc js-op :numeric true)
+                            js-op)]
+                (vary-meta expanded merge js-op))
+              expanded))
           (catch #?(:clj Throwable :cljs :default) _
             form))
         form))

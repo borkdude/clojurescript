@@ -971,7 +971,7 @@
       (build/build (build/inputs (io/file inputs "cljs_3470_async_await/core.cljs")) opts cenv))
     (let [source (slurp (io/file out "cljs_3470_async_await/core.js"))]
       (testing "Test that implicit IIFEs (due to let etc.) without `await` remain synchronous"
-        (is (= 20 (count (re-seq #"\(await" source)))))
+        (is (= 17 (count (re-seq #"\(await" source)))))
       (testing "Test that ANF flattens nested lets, eliminating async IIFEs"
         ;; anf-optimized has two nested lets with await in binding inits.
         ;; Without ANF these would each produce an async IIFE.
